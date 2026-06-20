@@ -94,16 +94,30 @@ g.reset(); g.drain(5); g.fill(2); g.auto_active = true
 ```
 
 ### `components/gx_floating_number.gd` — `GxFloatingNumber` (CanvasLayer)
-Floating number display with pop→float→wobble→fade animation.
-Instantiate once (set `layer`), call `spawn()` anywhere with a preset or custom config.
+Floating number display with pop→float→wobble→fade animation. Each call creates
+a self-destructing Label. Use for damage numbers, score popups, crits, misses, etc.
+
 ```gdscript
 var fn := GxFloatingNumber.new(); fn.layer = 100; add_child(fn)
 fn.spawn(pos, "+80", GxFloatingNumber.Preset.HEAL)
 fn.spawn(pos, "999", GxFloatingNumber.Preset.CRITICAL, {font_size = 36})
 fn.spawn_custom(pos, "???", {color = Color.VIOLET, scale_start = 3.0})
 ```
-Presets: `DEFAULT` `DAMAGE` `HEAL` `CRITICAL` `MUTED`.
-Override keys: `color` `font_size` `scale_start` `float_distance` `wobble` `duration`.
+
+**Presets:** `DEFAULT` (white) `DAMAGE` (red) `HEAL` (green) `CRITICAL` (gold, bigger)
+`MUTED` (gray, smaller). Each preset controls default color / scale / font_size /
+float_distance / wobble.
+
+**Override keys** (pass as 4th arg to `spawn()` or full dict to `spawn_custom()`):
+
+| key | type | default (preset) | description |
+|-----|------|------------------|-------------|
+| `color` | Color | preset | text color |
+| `font_size` | int | preset | font size in px |
+| `scale_start` | float | preset | initial pop scale (e.g. 2.5 → 1.0) |
+| `float_distance` | float | preset | pixels to drift upward |
+| `wobble` | float | preset | max horizontal random drift |
+| `duration` | float | 0.8 | total animation time (seconds) |
 
 ### `utils/`
 - `GxMath` — `approach`, `remap_clamped`, `chance`, `pick_random` (all static)

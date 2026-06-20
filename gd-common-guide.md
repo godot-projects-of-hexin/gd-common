@@ -38,6 +38,7 @@ gd-common ──submodule──> game-template ──克隆──> 你的新游�
 | UIManager | `core/ui_manager.gd` | autoload | Control 面板栈（瞬态模态弹窗） |
 | GxStateMachine / GxState | `fsm/` | 类 | 最小状态机（控场景/关卡/流程，也可用于 AI） |
 | GxGaugeComponent | `components/gauge_component.gd` | Node | 有界数值条（耐心/血量/体力/读条） |
+| GxFloatingNumber | `components/gx_floating_number.gd` | CanvasLayer | 浮动数字显示（伤害/暴击/治疗/得分弹出） |
 | GxMath / GxCooldown / GxObjectPool | `utils/` | 类 | 数学工具 / 冷却计时 / 对象池 |
 
 ### 2.1 EventBus —— 跨模块通信
@@ -101,7 +102,34 @@ g.reset(); g.drain(5); g.fill(2); g.auto_active = true
 ```
 - 用于：机器人耐心、血量、体力、读条/充能。`rate_scale` 可做急单×1.5 等加速。
 
-### 2.7 utils
+### 2.7 GxFloatingNumber —— 浮动数字
+```gdscript
+const GxFloatingNumber := preload("res://addons/gd-common/components/gx_floating_number.gd")
+
+var fn := GxFloatingNumber.new()
+fn.layer = 100       # 确保在所有 UI 之上
+add_child(fn)
+
+# 5 种预设 ——— 颜色、缩放、字体、位移、晃动都已配好
+fn.spawn(pos, "+80",   GxFloatingNumber.Preset.HEAL)       # 绿, 回复/得分
+fn.spawn(pos, "-30",   GxFloatingNumber.Preset.DAMAGE)      # 红, 伤害/损失
+fn.spawn(pos, "CRIT!", GxFloatingNumber.Preset.CRITICAL)    # 金, 暴击/大招(大字大弹)
+fn.spawn(pos, "MISS",  GxFloatingNumber.Preset.MUTED)       # 灰, 未命中/低调提示
+fn.spawn(pos, "1402",  GxFloatingNumber.Preset.DEFAULT)     # 白, 通用
+
+# 预设 + 覆盖个别参数（不破坏预设的其他默认值）
+fn.spawn(pos, "999", GxFloatingNumber.Preset.CRITICAL, {font_size = 36})
+
+# 完全自定义
+fn.spawn_custom(pos, "???", {color = Color.VIOLET, font_size = 24, scale_start = 3.0, wobble = 20})
+```
+- 每个 `spawn()` 调用的 Label **自动销毁**（动画结束 `queue_free`），无需手动清理。
+- 动画序列：弹出放大→正常(0.12s) → 上浮 + 水平微晃 + 渐隐(0.8s) → 销毁。
+- `spawn(pos, text, preset, overrides)` — 用预设；`spawn_custom(pos, text, cfg)` — 完全手写。
+- cfg 键：`color`(Color), `font_size`(int), `scale_start`(float), `float_distance`(float), `wobble`(float), `duration`(float)。
+- 用途：伤害数字、暴击弹出、得分/扣分、治疗数字、Miss 提示、Combo 文字。
+
+### 2.8 utils
 - `GxMath`（静态）：`approach / remap_clamped / chance / pick_random`
 - `GxCooldown`：`start / update(delta) / is_ready / progress`，信号 `finished`
 - `GxObjectPool`：`acquire / release`，工厂回调创建实例
