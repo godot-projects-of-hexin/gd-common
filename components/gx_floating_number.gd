@@ -19,7 +19,7 @@ const DEFAULT_DURATION := 0.8
 
 ## Spawn a floating number using a preset style. Pass overrides to tweak individual params.
 func spawn(pos: Vector2, text: String, preset: Preset = Preset.DEFAULT, overrides: Dictionary = {}) -> void:
-	var cfg := PRESET_CFG[preset].duplicate()
+	var cfg: Dictionary = PRESET_CFG[preset].duplicate()
 	cfg.merge(overrides)
 	_emit(pos, text, cfg)
 
