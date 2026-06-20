@@ -5,6 +5,9 @@ extends EditorPlugin
 
 const AUTOLOADS := {
 	"EventBus": "res://addons/gd-common/core/event_bus.gd",
+	"SaveSystem": "res://addons/gd-common/core/save_system.gd",
+	"AudioManager": "res://addons/gd-common/core/audio_manager.gd",
+	"UIManager": "res://addons/gd-common/core/ui_manager.gd",
 }
 
 
