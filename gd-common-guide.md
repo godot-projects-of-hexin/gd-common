@@ -175,3 +175,159 @@ git add addons/gd-common && git commit -m "bump gd-common"
 - ⚠️ **别对 CyberCookV3 跑 `--import` / `--editor`**：会触发内置 CSV 翻译导入器把数据 CSV 回退（覆盖 csv-data 导入器）。GUI 编辑器正常用没问题；CSV 的工作产物（9 个 `.import` + `.godot/imported` 的 `.res`）已从 V2 拷入并稳定。
 - **本地仓库 → 远程**：gd-common / game-template 目前是本地仓库（`file:///`）。建好 GitHub 仓库后 `git remote add` 并把各项目 `.gitmodules` 的 url 改为远程地址。
 - **headless 引用类**：用 `preload(".../xxx.gd")` 而非全局 `class_name`，避免依赖编辑器的全局类缓存。
+
+---
+
+## 8. 如何新增一个通用模块（贡献指南）
+
+> 先问一句：**这功能跨游戏通用吗？** 通用 → 进 gd-common；带游戏专属假设 → 放项目 `modules/`，别污染共享层。
+> 提示「三次法则」：同一个东西在 2~3 个地方用过、形态稳定了再抽进来，别过早抽象。
+
+### 8.1 文件夹职责表（**先看这个，防乱放**）
+
+| 文件夹 | 放什么 | 用来做什么 | 什么时候用 | ❌ 不该放（反例） |
+|---|---|---|---|---|
+| `core/` | 全局服务单例（autoload 脚本，**不写 class_name**） | 提供「全局唯一、处处可访问」的跨模块服务 | 事件总线 / 存档 / 音频 / UI 管理 / 日志 等需要全局一份的 | 挂节点的组件→`components`；纯函数→`utils` |
+| `components/` | 继承 `Node` 的可复用组件 | 给任意游戏对象「拼装」一种能力/行为，随节点实例存在 | 功能是「某对象的一种能力」、有自己状态/信号、要进场景树（血量/耐心/移动/拾取/计时） | 全局单例→`core`；无状态计算→`utils`；状态机→`fsm` |
+| `fsm/` | 状态机基类/框架 | 管理状态切换（流程/关卡/AI） | 需要有限状态机、或扩展 FSM 能力时 | 非状态相关逻辑 |
+| `utils/` | 无状态工具类（多为静态函数） | 通用计算/小助手，不进场景树 | 纯逻辑：数学/随机/计时/对象池/字符串 | 要进场景树→`components`；全局服务→`core` |
+| 根 `plugin.gd` / `plugin.cfg` | 插件入口 | 启用时注册 autoload | **仅当新增/删除 autoload 时**才改 | 业务逻辑 |
+
+> 新增大类（如可复用 Control 控件）可建新子文件夹（如 `ui_base/`），但**必须在本表登记 + 在 `README.md` 加契约条目**，保持本表是唯一权威映射。
+
+### 8.2 选放哪的决策流（一句话判定）
+
+```
+全局唯一、到处可调？ ───────────────── 是 → core/  (autoload)
+挂在节点上、随实例存在、给对象加能力？ ── 是 → components/
+是状态机？ ─────────────────────────── 是 → fsm/
+纯函数 / 不进场景树的工具？ ─────────── 是 → utils/
+都不是 / 带游戏专属假设？ ───────────── 不进 gd-common，放项目 modules/
+```
+
+### 8.3 命名 / 类型规范
+
+- 普通类/组件：`class_name GxXxx`（**Gx 前缀**）。
+- autoload 脚本：用简洁全局名（如 `Logger`），脚本里**不要写 class_name**（会与 autoload 全局名冲突）。
+- 信号、文件名：`snake_case`（如 `value_changed`、`gx_timer.gd`）。
+- 头部引用其它 Gx 类优先 `preload(...)`，headless/CI 更稳。
+
+### 8.4 两种添加流程 + 手把手示例
+
+#### A. 普通类 / 组件（不需要全局单例）——**最常见，不用改 plugin.gd**
+
+1) 新建 `components/gx_timer.gd`：
+```gdscript
+class_name GxTimer
+extends Node
+## 可复用倒计时组件。挂在任意节点上。
+
+signal timeout
+
+@export var duration: float = 1.0
+@export var autostart: bool = false
+
+var _left: float = 0.0
+var _running: bool = false
+
+
+func _ready() -> void:
+	if autostart:
+		start()
+
+
+func start(d: float = -1.0) -> void:
+	if d > 0.0:
+		duration = d
+	_left = duration
+	_running = true
+
+
+func stop() -> void:
+	_running = false
+
+
+func _process(delta: float) -> void:
+	if not _running:
+		return
+	_left -= delta
+	if _left <= 0.0:
+		_running = false
+		timeout.emit()
+```
+
+2) 在 `README.md` 文件夹表/契约里登记一条。
+
+3) 调用（任意项目，pull 到最新后）：
+```gdscript
+const GxTimer := preload("res://addons/gd-common/components/gx_timer.gd")
+
+var t := GxTimer.new()
+add_child(t)
+t.timeout.connect(func(): print("时间到"))
+t.start(3.0)
+```
+> 编辑器里全局类缓存生效后，也可直接 `GxTimer.new()`。
+
+#### B. 新 autoload 服务（需要全局单例）——**多两步注册**
+
+1) 新建 `core/logger.gd`（**不写 class_name**）：
+```gdscript
+extends Node
+## 全局日志服务（autoload: Logger）。
+
+enum Level { DEBUG, INFO, WARN, ERROR }
+
+var min_level: int = Level.DEBUG
+
+
+func info(msg: String) -> void:
+	_log(Level.INFO, msg)
+
+
+func warn(msg: String) -> void:
+	_log(Level.WARN, msg)
+
+
+func error(msg: String) -> void:
+	_log(Level.ERROR, msg)
+
+
+func _log(level: int, msg: String) -> void:
+	if level < min_level:
+		return
+	print("[%s] %s" % [Level.keys()[level], msg])
+```
+
+2) 在 `plugin.gd` 的 `AUTOLOADS` 里加一条：
+```gdscript
+const AUTOLOADS := {
+	"EventBus": "res://addons/gd-common/core/event_bus.gd",
+	# ... 既有的 ...
+	"Logger": "res://addons/gd-common/core/logger.gd",   # 新增
+}
+```
+
+3) 在消费项目 `project.godot` 的 `[autoload]` 注册（或在编辑器里禁用再启用插件，让它自动写入）：
+```
+Logger="*res://addons/gd-common/core/logger.gd"
+```
+
+4) 调用（全局，任何地方）：
+```gdscript
+Logger.info("开张了")
+Logger.error("出错了")
+```
+
+### 8.5 每个模块必交付 / 发布 / 验证
+
+- **必交付**：① 遵守 §6 军规；② 在 `README.md` 加契约条目（API + 一段最小用法）；③ §8.1 表里能对上号的归属。
+- **发布链路**：
+  ```
+  # 在源仓库 D:\GitRepos\gd-common
+  git add -A && git commit -m "feat: GxTimer"
+  # 在每个消费项目
+  git -C addons/gd-common pull origin main
+  ```
+- **验证**：`godot --headless --path <项目> --quit`，确认 0 SCRIPT/Parse ERROR。
+
