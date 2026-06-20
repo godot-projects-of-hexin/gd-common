@@ -2,6 +2,9 @@
 
 Reusable **generic layer** for Godot 4 projects, shipped as an addon and consumed via Git submodule.
 
+> 中文完整指南（总览 / 各模块用法 / 接入 / 军规 / 踩坑）见 [gd-common-guide.md](gd-common-guide.md)。
+
+
 > Scope: genre-agnostic infrastructure only. **No game-specific gameplay.**
 > Convention: shared `class_name` prefix `Gx`; autoload names plain (`EventBus`, `SaveSystem`, `AudioManager`, `UIManager`).
 
