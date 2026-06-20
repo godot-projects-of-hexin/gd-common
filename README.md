@@ -93,6 +93,18 @@ g.value_changed.connect(...); g.depleted.connect(...)
 g.reset(); g.drain(5); g.fill(2); g.auto_active = true
 ```
 
+### `components/gx_floating_number.gd` — `GxFloatingNumber` (CanvasLayer)
+Floating number display with pop→float→wobble→fade animation.
+Instantiate once (set `layer`), call `spawn()` anywhere with a preset or custom config.
+```gdscript
+var fn := GxFloatingNumber.new(); fn.layer = 100; add_child(fn)
+fn.spawn(pos, "+80", GxFloatingNumber.Preset.HEAL)
+fn.spawn(pos, "999", GxFloatingNumber.Preset.CRITICAL, {font_size = 36})
+fn.spawn_custom(pos, "???", {color = Color.VIOLET, scale_start = 3.0})
+```
+Presets: `DEFAULT` `DAMAGE` `HEAL` `CRITICAL` `MUTED`.
+Override keys: `color` `font_size` `scale_start` `float_distance` `wobble` `duration`.
+
 ### `utils/`
 - `GxMath` — `approach`, `remap_clamped`, `chance`, `pick_random` (all static)
 - `GxCooldown` — manual timer, `start/update(delta)/is_ready/progress`, `finished`
