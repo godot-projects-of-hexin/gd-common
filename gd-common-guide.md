@@ -44,6 +44,16 @@ gd-common ──submodule──> game-template ──克隆──> 你的新游�
 ### 2.1 服务（Autoload 全局单例）—— 处处可调的全局服务
 
 #### 2.1.1 EventBus —— 跨模块通信
+
+**是什么**：全局发布/订阅事件总线（autoload）。让模块 A 发消息时不认识模块 B——A 只管喊「事件 X 发生了」，谁关心谁订阅。
+
+**怎么工作**：`subscribe(事件名, 回调函数)` 把回调登记到一张内部字典（事件名 → 回调数组）；`emit_event(事件名, 数据)` 遍历数组逐个调用，传一个 payload 参数；如果某个回调的对象已被 `queue_free()` 销毁，`is_valid()` 返回 false → 自动从列表里删掉，不报错。遍历时用数组副本，防止回调内部又订阅/退订导致数组变动出 bug。
+
+**什么时候用**：
+- 模块 A 变了要通知模块 B，但 A 不想引用 B（解耦）。
+- 一条消息要发给多个监听者（HUD、音效、成就系统都要知道「token 变了」）。
+- 替代散落的 `signal` + `connect`——用一个中心化的命名事件系统。
+
 ```gdscript
 EventBus.subscribe(&"tokens_changed", _on_tokens)   # 消费者订阅
 EventBus.emit_event(&"tokens_changed", 120)          # 产者广播（payload 一个参数）
@@ -53,6 +63,16 @@ EventBus.unsubscribe(&"tokens_changed", _on_tokens)
 - 其它：`has_subscribers / clear_event / clear_all`。
 
 #### 2.1.2 SaveSystem —— 存档
+
+**是什么**：通用存档机制（autoload）。只管「**怎么存**」（序列化到磁盘、槽位管理、版本迁移），不管「**存什么**」（字段由你的 GameData 定义）。
+
+**怎么工作**：你组好一个 `Dictionary` → `save_to_slot(N, dict)` → 内部用 `ConfigFile` 把每个键值对写入 `user://saves/slot_N.cfg`，同时写入 `__version`（你设置的版本号）。`load_from_slot(N)` 读回字典，如果文件里的版本号 ≠ 当前版本，就调用你注册的 migrator 回调做数据迁移。`has_slot(N)` 检查存档是否存在。
+
+**什么时候用**：
+- 关卡进度、玩家数据、解锁内容、设置项——任何需要跨会话持久化的数据。
+- 多存档槽（不同玩家 / 不同周目）。
+- 存档格式可能升级（v1→v2 加字段），需要版本迁移钩子。
+
 ```gdscript
 SaveSystem.save_to_slot(0, {"level": 3, "tokens": 120})   # 你组好 dict
 var data := SaveSystem.load_from_slot(0)                    # 没有则返回 {}
@@ -62,7 +82,106 @@ SaveSystem.set_version(2); SaveSystem.set_migrator(回调)    # 版本迁移
 - 存到 `user://saves/slot_N.cfg`，带 `__version`。
 - 「存什么」由项目的 GameData 决定；SaveSystem 只负责落盘/读盘。
 
+##### 2.1.2.1 SaveSystem 完整接入教程
+
+**目标**：一个完全陌生的开发者照着做就能跑通存读档。
+
+**步骤 1 — 注册 autoload**（如果用 game-template，已配好，跳过）
+```
+# project.godot [autoload]
+SaveSystem="*res://addons/gd-common/core/save_system.gd"
+GameData="*res://core/game_data.gd"     # 你自己写的，下面有模板
+```
+
+**步骤 2 — 写你的 GameData autoload**（管「存什么」）
+```gdscript
+# core/game_data.gd
+extends Node
+
+const SAVE_SLOT := 0
+
+# --- 你的游戏数据 ---
+var level: int = 0
+var tokens: int = 0
+var unlocked_items: Array[String] = []
+
+signal changed
+
+
+# --- 存档：组好 dict 交给 SaveSystem ---
+func save() -> void:
+	SaveSystem.save_to_slot(SAVE_SLOT, {
+		"level": level,
+		"tokens": tokens,
+		"unlocked_items": unlocked_items,
+	})
+
+
+# --- 读档：从 SaveSystem 拿回 dict，拆到字段 ---
+func load_game() -> void:
+	var data := SaveSystem.load_from_slot(SAVE_SLOT)
+	if data.is_empty():           # 没有存档（首次运行/删除后）
+		return
+	level = data.get("level", 0)
+	tokens = data.get("tokens", 0)
+	unlocked_items.assign(data.get("unlocked_items", []))
+	changed.emit()
+
+
+func has_save() -> bool:
+	return SaveSystem.has_slot(SAVE_SLOT)
+
+
+func new_game() -> void:
+	level = 0; tokens = 0; unlocked_items.clear()
+	changed.emit()
+```
+
+**步骤 3 — 在业务代码里调用**
+```gdscript
+# 存档（比如通关后）
+GameData.level += 1
+GameData.tokens += 500
+GameData.save()                        # 一行存盘
+
+# 读档（比如标题画面「继续」按钮）
+if GameData.has_save():
+	GameData.load_game()
+
+# 删档
+SaveSystem.delete_slot(0)
+```
+
+**步骤 4 — 版本迁移（当你的存档格式升级时）**
+```gdscript
+# 比如你的游戏从 v1 升级到 v2，加了个 "difficulty" 字段：
+func _ready() -> void:
+	SaveSystem.set_version(2)
+	SaveSystem.set_migrator(_migrate)
+
+func _migrate(data: Dictionary, from_v: int, to_v: int) -> Dictionary:
+	if from_v < 2:
+		data["difficulty"] = "normal"   # 老存档补默认值
+	return data
+```
+
+**要点**：
+- SaveSystem **不认识你的字段**——它只存/读一个 dict。`data.get("key", default)` 是安全的取法（键不存在时返回默认值）。
+- `load_from_slot` 返回 `{}`（空字典）= 没有存档，用 `is_empty()` 判断。
+- 存档存在 `user://saves/` 下——不同操作系统路径不同，但 Godot 的 `user://` 统一处理了。
+- ConfigFile 能存嵌套 Dictionary 和 Array，但**不能存 Object 实例**——存之前把自定义对象转成 dict/数组。
+
 #### 2.1.3 AudioManager —— 音频
+
+**是什么**：统一音效/音乐播放器（autoload）。内部维护一个 SFX 播放器池（8 个 AudioStreamPlayer）和一个音乐播放器，支持淡入淡出。
+
+**怎么工作**：`_ready` 时创建 8 个 `AudioStreamPlayer` 做 SFX 池——同时播放多个音效不互相截断，`play_sfx` 找一个空闲的播放器用；全忙时复用第一个。音乐用单独的播放器，`play_music` 可选 `fade_sec` 参数做淡入（用 `Tween` 从 -60dB 渐变到目标音量），`stop_music(fade_sec)` 淡出后停止。音频**资源文件（.wav/.ogg）留在你的项目里**，调用时把 `AudioStream` 传进来——AudioManager 不自带素材。
+
+**什么时候用**：
+- 任何需要播放音效/背景音乐的地方——比每次手动 `AudioStreamPlayer.new()` + `add_child()` 省事。
+- 需要多个音效同时播放（射击 + 爆炸 + 脚步）而不互相截断。
+- 需要音乐淡入淡出切换。
+
 ```gdscript
 AudioManager.play_sfx(stream, -3.0, 1.1)   # 流, 音量dB, 音高
 AudioManager.play_music(stream, 1.5)        # 淡入 1.5s
@@ -71,6 +190,16 @@ AudioManager.stop_music(1.0)                # 淡出
 音频**资源（.wav/.ogg）留在项目里**，把 stream 传进来。
 
 #### 2.1.4 UIManager —— 模态面板栈
+
+**是什么**：通用 Control 面板栈管理器（autoload）。在自带的 CanvasLayer 上管理一堆弹窗，按栈式（后进先出）打开/关闭。
+
+**怎么工作**：`_ready` 创建一个 `CanvasLayer`（默认 layer=100，在游戏内容之上）。`push_panel(packed_scene)` 实例化一个 Control 场景叠上去，同时**自动隐藏栈中上一个面板**（只显示最顶层）；`pop_panel()` 销毁顶部面板并恢复下一个可见。`clear()` 一次性清空所有面板。栈为空时什么都不显示。
+
+**什么时候用**：
+- 瞬态模态弹窗：设置面板、确认对话框、结算面板、暂停菜单。
+- 需要多个弹窗叠加（设置 → 二级确认框），自动管理显隐。
+- ⚠️ **不**适合常驻 HUD（那是 always-on，不是栈式弹出）或 Node2D 面板（`push_panel` 要求场景根是 `Control`）。
+
 ```gdscript
 var p := UIManager.push_panel(packed_scene)   # 场景根必须是 Control
 UIManager.pop_panel(); UIManager.get_top(); UIManager.clear()
@@ -242,6 +371,15 @@ func sees_player() -> bool:
 ### 2.3 组件（挂节点的）—— extends Node，给对象拼装能力
 
 #### 2.3.1 GxGaugeComponent —— 数值条组件
+
+**是什么**：一个有界数值条（`extends Node`），挂在任意节点上。值在 `[0, max_value]` 范围内，可随时间自动消耗/恢复，也可手动加减。
+
+**怎么工作**：`_ready` 初始化为满或空（由 `start_full` 决定）。如果 `auto_rate > 0`，`_process` 每帧自动减值（`auto_rate × rate_scale × delta`）；`auto_rate < 0` 自动恢复。`drain(n)` / `fill(n)` 手动加减，值变化时发 `value_changed(current, max)` 信号，归零发 `depleted`，满发 `filled`。`auto_active` 开关控制是否随时间变化（false = 暂停自动消耗）。`rate_scale` 做倍率（急单 ×1.5、冰冻 ×0.5 等）。
+
+**什么时候用**：
+- 任何「有上下限、会随时间或事件变化的数值」——机器人耐心、角色血量、体力条、技能充能/读条、经验条。
+- 需要在 UI 上显示进度条 + 值归零时触发事件（比如耐心耗尽 → 机器人离开）。
+
 ```gdscript
 var g := GxGaugeComponent.new()
 g.max_value = 30.0
@@ -284,6 +422,16 @@ fn.spawn_custom(pos, "???", {color = Color.VIOLET, font_size = 24, scale_start =
 ### 2.4 工具 —— 无状态/轻量，不进场景树
 
 #### GxMath（静态函数）
+
+**是什么**：静态数学工具类（`extends Object`），所有方法都是 `static func`，无状态，直接 `GxMath.xxx()` 调用，不需要实例化。
+
+**怎么工作**：纯函数——输入参数，返回结果，不持有任何状态、不依赖场景树。
+
+**什么时候用**：省得每次手写那些常见的小计算。
+- `approach`：平滑趋近一个目标值（每帧靠近但不越过），用于镜头跟随、数值平滑过渡。
+- `remap_clamped`：把一个值从一个范围映射到另一个范围（带钳制），用于进度条百分比、颜色插值。
+- `chance`：按概率返回 true/false（0~1），用于随机事件触发（20% 掉落）。
+- `pick_random`：从数组随机取一个元素，用于随机选择。
 ```gdscript
 var v := GxMath.approach(5.0, 10.0, delta * 3.0)          # 朝 10 靠拢，每帧+3
 var r := GxMath.remap_clamped(0.5, 0.0, 1.0, 0.0, 100.0)   # → 50.0
@@ -292,6 +440,14 @@ var pick = GxMath.pick_random(["a", "b", "c"])             # 随机取一个
 ```
 
 #### GxCooldown（手动计时器）
+
+**是什么**：手动倒计时器（`extends RefCounted`，不是 Node——不进场景树，更轻量）。
+
+**怎么工作**：`start()` 把 `time_left` 设为 `duration`；`update(delta)` 每帧递减；`time_left` 归零时触发 `finished` 信号一次；`is_ready()` 判断是否到 0；`progress()` 返回 0.0~1.0 的进度比。你需要自己在外部调 `update(delta)`——它不会自动运行（因为没有 `_process`）。
+
+**什么时候用**：
+- 技能冷却、生成间隔、防抖——任何「等 N 秒就好了」的需求。
+- 和 Godot 内置 `Timer` 节点的区别：`GxCooldown` 是 RefCounted（不进场景树、不自动跑），适合在非 Node 上下文里用（比如纯逻辑类里计时），或者你想要手动控制推进时机时。如果你已经在场景树里且想要自动计时，直接用 `Timer` 节点更方便。
 ```gdscript
 var cd := GxCooldown.new(2.0)     # 2 秒冷却
 cd.start()                        # 开始计时
@@ -301,6 +457,14 @@ print(cd.progress())              # 0.0~1.0 进度
 ```
 
 #### GxObjectPool（对象池）
+
+**是什么**：通用对象池（`extends RefCounted`），基于工厂回调创建实例，`acquire` 取用 / `release` 归还复用。
+
+**怎么工作**：构造时传入一个 `factory` Callable（负责创建新实例）和可选预热数量（提前创建 N 个放池里）。`acquire()` 从池里取一个——池空就调 factory 新建；`release(obj)` 把对象还回池里等下次复用。池本身不关心对象是什么类型，只管存取。
+
+**什么时候用**：
+- 频繁创建/销毁的对象：子弹、粒子、特效实例、敌人——避免反复 `instantiate()` + `queue_free()` 的开销。
+- 对象构造代价大（复杂场景、带初始化逻辑），复用比重建划算。
 ```gdscript
 var pool := GxObjectPool.new(func(): return Bullet.new(), 10)  # 工厂 + 预热 10 个
 var b = pool.acquire()    # 取一个（池空就新建）
