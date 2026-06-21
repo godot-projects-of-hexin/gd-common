@@ -35,6 +35,7 @@ gd-common ──submodule──> game-template ──克隆──> 你的新游�
 | **服务** | EventBus | `core/event_bus.gd` | 全局发布/订阅事件总线（解耦核心） |
 | | SaveSystem | `core/save_system.gd` | 通用存档机制（管「怎么存」，不管「存什么」） |
 | | AudioManager | `core/audio_manager.gd` | 统一音效/音乐播放（素材留项目） |
+| | SoundManager [第三方吸收] | `audio/sound_manager.gd` | 音频系统——音效/UI音效/环境音/音乐 4 类独立池 + 交叉淡入（源自 nathanhoad/godot_sound_manager v2.6.2 MIT） |
 | | UIManager | `core/ui_manager.gd` | Control 面板栈（瞬态模态弹窗） |
 | **状态机** | GxStateMachine / GxState | `fsm/` | 最小状态机（控场景/关卡/流程，也可用于 AI） |
 | **组件** | GxGaugeComponent | `components/gauge_component.gd` | 有界数值条（耐心/血量/体力/读条） |
@@ -171,23 +172,79 @@ func _migrate(data: Dictionary, from_v: int, to_v: int) -> Dictionary:
 - 存档存在 `user://saves/` 下——不同操作系统路径不同，但 Godot 的 `user://` 统一处理了。
 - ConfigFile 能存嵌套 Dictionary 和 Array，但**不能存 Object 实例**——存之前把自定义对象转成 dict/数组。
 
-#### 2.1.3 AudioManager —— 音频
+#### 2.1.3 SoundManager —— 音频系统（音效/UI/环境/音乐）[第三方吸收]
 
-**是什么**：统一音效/音乐播放器（autoload）。内部维护一个 SFX 播放器池（8 个 AudioStreamPlayer）和一个音乐播放器，支持淡入淡出。
+> 源自 nathanhoad/godot_sound_manager（MIT License，吸收版本 v2.6.2）。原始 LICENSE 见 `audio/LICENSE`。冻结在当前版本——如需更新，从此版本手动重拉重拷。
 
-**怎么工作**：`_ready` 时创建 8 个 `AudioStreamPlayer` 做 SFX 池——同时播放多个音效不互相截断，`play_sfx` 找一个空闲的播放器用；全忙时复用第一个。音乐用单独的播放器，`play_music` 可选 `fade_sec` 参数做淡入（用 `Tween` 从 -60dB 渐变到目标音量），`stop_music(fade_sec)` 淡出后停止。音频**资源文件（.wav/.ogg）留在你的项目里**，调用时把 `AudioStream` 传进来——AudioManager 不自带素材。
+**是什么**：autoload `SoundManager`，完整的 2D 音频系统。内部管理 **4 个独立播放器池**：普通音效（8 个）、UI 音效（8 个，暂停时也响）、环境音（1 个，支持淡入淡出）、音乐（2 个，支持交叉淡入）。每个池自动按名字找对应的音频总线（Music/Sounds/UI），找不到回落 Master。音量用 0~1 线性值（内部转 dB）。
+
+**怎么工作**：
+- **音效池**（`sound_effects` / `ui_sound_effects`）：每次调用从池里取空闲播放器，全忙时扩容；播放完自动归还。UI 音效池设置 `PROCESS_MODE_ALWAYS`——游戏暂停（如打开设置）时 UI 音效仍然响。
+- **环境音池**（`ambient_sounds`）：`play_ambient_sound` 带淡入、`stop_ambient_sound` 带淡出；同一资源重复播放不会叠加（复用已播放的）。
+- **音乐池**（`music`）：2 个播放器实现交叉淡入——`play_music` 先淡出旧音乐再淡入新音乐。维护 50 条音轨历史，支持暂停/恢复、查询当前播放、指定起始位置和初始音量。
 
 **什么时候用**：
-- 任何需要播放音效/背景音乐的地方——比每次手动 `AudioStreamPlayer.new()` + `add_child()` 省事。
-- 需要多个音效同时播放（射击 + 爆炸 + 脚步）而不互相截断。
-- 需要音乐淡入淡出切换。
+- 任何音效、UI 音效、环境音、背景音乐播放。比散落 `AudioStreamPlayer` 好在一套 API 统一管理、自动池化、自动淡入淡出。
+- 需要 UI 音效（菜单/按钮）不受暂停影响。
+- 需要音乐交叉淡入切换、音轨历史、暂停/恢复。
 
 ```gdscript
-AudioManager.play_sfx(stream, -3.0, 1.1)   # 流, 音量dB, 音高
-AudioManager.play_music(stream, 1.5)        # 淡入 1.5s
-AudioManager.stop_music(1.0)                # 淡出
+# 音效
+SoundManager.play_sound(load("res://sfx/hit.wav"))
+SoundManager.play_sound_with_pitch(load("res://sfx/hit.wav"), 1.2)
+SoundManager.stop_sound(load("res://sfx/hit.wav"))
+
+# UI 音效（暂停时也响）
+SoundManager.play_ui_sound(load("res://sfx/click.wav"))
+
+# 环境音（淡入淡出）
+SoundManager.play_ambient_sound(load("res://sfx/rain.wav"), 2.0)   # 淡入 2s
+SoundManager.stop_ambient_sound(load("res://sfx/rain.wav"), 2.0)   # 淡出 2s
+
+# 音乐（交叉淡入）
+SoundManager.play_music(load("res://bgm/field.wav"), 1.5)           # 交叉淡入 1.5s
+SoundManager.play_music_at_volume(bgm, 0.8, 2.0)                    # 指定初始音量+淡入
+SoundManager.pause_music(); SoundManager.resume_music()
+SoundManager.stop_music(2.0)                                        # 淡出 2s 后停
+SoundManager.is_music_playing()                                     # 有音乐在响吗
+SoundManager.get_music_track_history()                              # 最近 50 首
+
+# 音量（0~1 线性，接设置滑块直接绑）
+SoundManager.set_sound_volume(0.8)
+SoundManager.set_music_volume(slider.value)
 ```
-音频**资源（.wav/.ogg）留在项目里**，把 stream 传进来。
+
+##### 2.1.3.1 SoundManager 完整接入教程
+
+**步骤 1 — 准备音频总线**（用 game-template 自带的总线布局，或手动加）
+- 打开 `Audio` 面板，确保有以下总线：`Music`、`Sounds`、`UI`（名字大小写不敏感，自动匹配）。没有就新建空总线。
+- 如果缺这些总线，SoundManager 会回落 `Master` 并打印警告——功能正常，但无法独立控制分类音量。
+
+**步骤 2 — autoload 注册**（如果用 game-template/gd-common，已配好，跳过）
+```
+# project.godot [autoload]
+SoundManager="*res://addons/gd-common/audio/sound_manager.gd"
+```
+
+**步骤 3 — 调整默认总线（可选）**
+```gdscript
+func _ready() -> void:
+	SoundManager.set_default_sound_bus("Sounds")
+	SoundManager.set_default_music_bus("Music")
+	SoundManager.set_default_ui_sound_bus("UI")
+```
+如果不调，SoundManager 自动按 `["Sounds","SFX"]` / `["UI","Interface","Sounds","SFX"]` / `["Music"]` 顺序找第一个存在的总线。
+
+**步骤 4 — 设置面板接音量**
+```gdscript
+# 你的设置 UI
+func _on_music_slider_changed(value: float) -> void:
+	SoundManager.set_music_volume(value)      # value 0~1
+
+func _on_sfx_slider_changed(value: float) -> void:
+	SoundManager.set_sound_volume(value)
+```
+
 
 #### 2.1.4 UIManager —— 模态面板栈
 
@@ -608,6 +665,7 @@ git add addons/gd-common && git commit -m "bump gd-common"
 | 文件夹 | 放什么 | 用来做什么 | 什么时候用 | ❌ 不该放（反例） |
 |---|---|---|---|---|
 | `core/` | 全局服务单例（autoload 脚本，**不写 class_name**） | 提供「全局唯一、处处可访问」的跨模块服务 | 事件总线 / 存档 / 音频 / UI 管理 / 日志 等需要全局一份的 | 挂节点的组件→`components`；纯函数→`utils` |
+| `audio/` | 音频系统（第三方吸收，5 文件子系统） | 音效/UI音效/环境音/音乐 4 类独立播放器池 + 交叉淡入（源自 nathanhoad/godot_sound_manager v2.6.2 MIT） | 需要音频时 | 单文件服务→`core`；组件→`components` |
 | `components/` | 继承 `Node` 或 `CanvasLayer` 的可复用组件 | 给任意游戏对象「拼装」一种能力/行为，或充当独立 UI 覆盖层，随节点实例存在 | 功能是「某对象的一种能力」、有自己状态/信号、要进场景树（血量/耐心/移动/拾取/计时；UI控件如浮动数字也放这） | 全局单例→`core`；无状态计算→`utils`；状态机→`fsm` |
 | `fsm/` | 状态机基类/框架 | 管理状态切换（流程/关卡/AI） | 需要有限状态机、或扩展 FSM 能力时 | 非状态相关逻辑 |
 | `utils/` | 无状态工具类（多为静态函数） | 通用计算/小助手，不进场景树 | 纯逻辑：数学/随机/计时/对象池/字符串 | 要进场景树→`components`；全局服务→`core` |

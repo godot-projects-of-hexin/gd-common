@@ -57,12 +57,15 @@ SaveSystem.set_version(2); SaveSystem.set_migrator(my_migrate_callable)
 ```
 Stores `user://saves/slot_N.cfg` with a `__version` for migration.
 
-### `core/audio_manager.gd` — autoload `AudioManager`
-Generic playback; audio **assets stay in the project**.
+### `audio/sound_manager.gd` — autoload `SoundManager` [absorbed from nathanhoad/godot_sound_manager v2.6.2 MIT]
+Split into 4 player pools: sounds (×8), UI sounds (×8, plays when paused), ambient (×1, fade in/out), music (×2, crossfade). Auto-detects audio buses by name.
 ```gdscript
-AudioManager.play_sfx(stream, -3.0, 1.1)
-AudioManager.play_music(stream, 1.5)   # fade in
-AudioManager.stop_music(1.0)
+SoundManager.play_sound(stream)
+SoundManager.play_ui_sound(stream)            # plays even when paused
+SoundManager.play_ambient_sound(stream, 2.0)  # fade in
+SoundManager.play_music(stream, 1.5)          # crossfade
+SoundManager.stop_music(2.0)                  # fade out
+SoundManager.set_music_volume(0.8)            # 0–1 linear
 ```
 
 ### `core/ui_manager.gd` — autoload `UIManager`
