@@ -86,8 +86,154 @@ sm.add_state(&"service", GxState.new())
 sm.state_changed.connect(func(from, to): ...)    # 监听切换做场景切换等
 sm.transition_to(&"prep")
 ```
-- 两种用法：子类化 `GxState`（重写 `_enter/_exit/_update`），或用纯 State + 监听 `state_changed`。
+- 两种用法：子类化 `GxState`（重写 `_enter/_exit/_update`），或用纯 State + 监听 `state_changed`（详见下方 §2.5b 完整教程）。
 - 头部用 `preload` 引用可避开「全局类缓存」依赖（headless/CI 更稳）。
+
+#### 2.5b 状态机完整教程
+
+GxStateMachine 有**两种典型场景**，选适合你的。
+
+---
+
+##### A. 纯 State + 监听信号 —— 适合「游戏流程 / 场景切换」
+
+**什么时候用**：阶段之间只是「换个场景 / 显示不同面板」，每个阶段本身没有复杂逻辑。CyberCookV3 的「备餐→营业→结算」就是这套。
+
+**完整步骤（复制可跑）**：
+
+```gdscript
+# -- autoload game_flow.gd （或挂在你自己的场景控制器上）--
+extends Node
+
+const GxStateMachine := preload("res://addons/gd-common/fsm/state_machine.gd")
+const GxState := preload("res://addons/gd-common/fsm/state.gd")
+
+var _sm
+
+
+func _ready() -> void:
+	# 1. 创建机器，self 作为 context（状态里可通过 machine.context 访问本节点）
+	_sm = GxStateMachine.new(self)
+
+	# 2. 给每个阶段注册一个「裸」GxState（不子类化，纯标记）
+	_sm.add_state(&"title", GxState.new())
+	_sm.add_state(&"prep", GxState.new())
+	_sm.add_state(&"service", GxState.new())
+
+	# 3. 监听切换信号——什么时候切了，就干什么事
+	_sm.state_changed.connect(_on_phase_changed)
+
+
+# 4. 对外暴露几个「一键切」的方法（业务层只调这几个）
+func go_prep() -> void:
+	_sm.transition_to(&"prep")
+
+func go_service() -> void:
+	_sm.transition_to(&"service")
+
+
+# 5. 切换时做的事（比如换场景）
+func _on_phase_changed(_from: StringName, to: StringName) -> void:
+	match to:
+		&"prep":    get_tree().change_scene_to_file("res://scenes/prep.tscn")
+		&"service": get_tree().change_scene_to_file("res://scenes/service.tscn")
+		&"title":   get_tree().change_scene_to_file("res://scenes/title.tscn")
+```
+
+**要点**：
+- 状态只是「名字」，行为全写在 `state_changed` 监听里——切换时做什么一目了然。
+- `add_state` 支持链式写一条。
+- 如果你想每帧驱动当前状态（比如营业阶段要跑计时），在 `_process` 里调 `_sm.update(delta)`。
+
+---
+
+##### B. 子类化 GxState —— 适合「角色 AI / 带行为的状态」
+
+**什么时候用**：每个状态有**自己的 `_enter` 逻辑 + `_update` 每帧行为**，需要在状态内部切换。比如 NPC 巡逻 → 追击 → 返回。
+
+**完整步骤（以巡逻/追击为例）**：
+
+```gdscript
+# -- patrol_state.gd --
+class_name PatrolState
+extends GxState
+
+func _enter() -> void:
+	print("开始巡逻")
+	machine.context.sprite.modulate = Color.GREEN   # 通过 context 访问宿主
+
+
+func _update(delta: float) -> void:
+	# 每帧：如果看到玩家 → 切换到追击
+	if machine.context.sees_player():
+		machine.transition_to(&"chase")
+
+
+func _exit() -> void:
+	print("离开巡逻")
+
+
+# -- chase_state.gd --
+class_name ChaseState
+extends GxState
+
+var _chase_speed: float = 200.0
+
+
+func _enter() -> void:
+	print("开始追击！")
+	machine.context.sprite.modulate = Color.RED
+
+
+func _update(delta: float) -> void:
+	# 朝玩家移动
+	var dir := machine.context.player.global_position - machine.context.global_position
+	machine.context.global_position += dir.normalized() * _chase_speed * delta
+
+	# 如果玩家跑远了 → 回巡逻
+	if dir.length() > 500.0:
+		machine.transition_to(&"patrol")
+```
+
+**宿主脚本（挂机器人/角色身上）**：
+
+```gdscript
+extends CharacterBody2D
+
+var _sm: GxStateMachine
+
+func _ready() -> void:
+	_sm = GxStateMachine.new(self)                       # self = context
+	_sm.add_state(&"patrol", PatrolState.new())
+	_sm.add_state(&"chase", ChaseState.new())
+	_sm.start(&"patrol")                                  # 从巡逻开始
+
+
+func _process(delta: float) -> void:
+	_sm.update(delta)                                     # 每帧驱动当前状态
+
+
+func sees_player() -> bool:
+	return false  # 实际判定逻辑
+```
+
+**要点**：
+- **`machine.context`** 就是 `GxStateMachine.new(self)` 里的 `self`——这里就是角色自己，所以状态里 `machine.context.sprite` 访问得到宿主的节点。
+- **在状态内部切状态**：`machine.transition_to(...)`。状态不需要知道状态机「在哪」，只要知道 `machine` 是自己的机器即可调用。
+- **`_enter` / `_exit`** 只执行一次，非常适合放「进入巡逻时播放音效」「退出追击时重置速度」这类一次性操作。
+- **`start(initial)`** 用于首次进入（没有旧状态可退出），和 `transition_to` 的区别就在这。
+
+---
+
+##### C. 和 `godot_state_charts` 的分工（如果你两个都用）
+
+| 场景 | 用什么 | 原因 |
+|---|---|---|
+| 游戏主流程/关卡切换（标题→备餐→营业→结算） | `GxStateMachine`（方式 A） | 简单线性流程，不需要条件守卫/并行/历史状态 |
+| 角色 AI / 复杂状态图（巡逻→追击→攻击，带条件分支） | `godot_state_charts` 插件 | 状态图（StateChart）支持守卫、并行、子状态，适合 AI |
+| 有每帧行为的简单状态 | `GxStateMachine`（方式 B） | 如果不想依赖外部插件，GxStateMachine 子类化够用 |
+
+两者**不冲突**——CyberCookV3 里 `GameFlow`（GxStateMachine）管流程，`robot.tscn`（godot_state_charts）管机器人 AI，各管各的。
 
 ### 2.6 GxGaugeComponent —— 数值条组件
 ```gdscript
