@@ -392,7 +392,39 @@ g.reset(); g.drain(5); g.fill(2); g.auto_active = true
 ```
 - 用于：机器人耐心、血量、体力、读条/充能。`rate_scale` 可做急单×1.5 等加速。
 
+**完整示例**（给机器人挂一个「耐心」条：随时间耗尽 → 耗尽就离开）：
+```gdscript
+extends Node2D
+
+const GAUGE := preload("res://addons/gd-common/components/gauge_component.gd")
+var _patience: Node
+
+func _ready() -> void:
+	_patience = GAUGE.new()
+	_patience.max_value = 30.0       # 30 点耐心
+	_patience.auto_rate = 1.0        # 每秒 -1
+	_patience.auto_active = true     # 开始倒数
+	add_child(_patience)
+	_patience.value_changed.connect(_on_patience_changed)
+	_patience.depleted.connect(_on_patience_empty)
+
+func _on_patience_changed(current: float, maximum: float) -> void:
+	$ProgressBar.value = current / maximum * 100.0   # 更新 UI 进度条
+
+func _on_patience_empty() -> void:
+	print("耐心耗尽，离开！")
+	queue_free()
+```
+> 完整实例见 CyberCookV3 `scripts/gameplay/robot.gd`（机器人耐心就是这么做的）。
+
 #### 2.3.2 GxFloatingNumber —— 浮动数字
+
+**是什么**：浮动数字显示组件（`extends CanvasLayer`）。每次 `spawn` 弹出一个会自动消失的数字（伤害、得分等）。
+
+**怎么工作**：`spawn(位置, 文本, 预设)` 创建一个 Label，播放「弹出放大 → 上浮 + 水平微晃 + 渐隐」动画，结束后 `queue_free` 自动销毁（无需你手动清理）。内置 5 种预设（DEFAULT/DAMAGE/HEAL/CRITICAL/MUTED），预配好了颜色/字号/缩放/位移/晃动；可用第 4 个参数覆盖个别值，或用 `spawn_custom` 完全自定义。
+
+**什么时候用**：伤害数字、暴击弹出、得分/扣分、治疗数字、Miss 提示、Combo 文字。
+
 ```gdscript
 const GxFloatingNumber := preload("res://addons/gd-common/components/gx_floating_number.gd")
 
