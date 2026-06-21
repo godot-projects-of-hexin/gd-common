@@ -28,13 +28,12 @@ gd-common ──submodule──> game-template ──克隆──> 你的新游�
 
 ## 2. 模块（按类别，与 §8.1 文件夹职责表对应）
 
-约定：共享 `class_name` 一律 `Gx` 前缀；autoload 名简洁（`EventBus`/`SaveSystem`/`AudioManager`/`UIManager`）。启用插件后 4 个 autoload 自动注册。
+约定：共享 `class_name` 一律 `Gx` 前缀；autoload 名简洁（`EventBus`/`SaveSystem`/`SoundManager`/`UIManager`）。启用插件后 4 个 autoload 自动注册。
 
 | 类别 | 模块 | 文件 | 是什么 |
 |---|---|---|---|
 | **服务** | EventBus | `core/event_bus.gd` | 全局发布/订阅事件总线（解耦核心） |
 | | SaveSystem | `core/save_system.gd` | 通用存档机制（管「怎么存」，不管「存什么」） |
-| | AudioManager | `core/audio_manager.gd` | 统一音效/音乐播放（素材留项目） |
 | | SoundManager [第三方吸收] | `audio/sound_manager.gd` | 音频系统——音效/UI音效/环境音/音乐 4 类独立池 + 交叉淡入（源自 nathanhoad/godot_sound_manager v2.6.2 MIT） |
 | | UIManager | `core/ui_manager.gd` | Control 面板栈（瞬态模态弹窗） |
 | **状态机** | GxStateMachine / GxState | `fsm/` | 最小状态机（控场景/关卡/流程，也可用于 AI） |
