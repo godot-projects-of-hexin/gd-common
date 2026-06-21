@@ -451,6 +451,29 @@ fn.spawn_custom(pos, "???", {color = Color.VIOLET, font_size = 24, scale_start =
 - cfg 键：`color`(Color), `font_size`(int), `scale_start`(float), `float_distance`(float), `wobble`(float), `duration`(float)。
 - 用途：伤害数字、暴击弹出、得分/扣分、治疗数字、Miss 提示、Combo 文字。
 
+**完整示例**（整个场景共用一个 GxFloatingNumber，敌人被击中时弹伤害数字）：
+```gdscript
+extends Node2D
+
+const FloatNum := preload("res://addons/gd-common/components/gx_floating_number.gd")
+var _fn: Node
+
+func _ready() -> void:
+	_fn = FloatNum.new()
+	_fn.layer = 100          # 盖在所有 UI 之上
+	add_child(_fn)
+
+# 敌人被击中时调用：在它头上弹一个伤害数字
+func _on_enemy_hit(enemy: Node2D, damage: int, is_crit: bool) -> void:
+	var preset = FloatNum.Preset.CRITICAL if is_crit else FloatNum.Preset.DAMAGE
+	_fn.spawn(enemy.global_position, "-%d" % damage, preset)
+
+# 玩家回血时
+func _on_player_heal(pos: Vector2, amount: int) -> void:
+	_fn.spawn(pos, "+%d" % amount, FloatNum.Preset.HEAL)
+```
+> CyberCookV3 暂未接入此组件——以上即完整用法（通用组件，给新项目用）。
+
 ### 2.4 工具 —— 无状态/轻量，不进场景树
 
 #### GxMath（静态函数）
