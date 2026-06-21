@@ -35,6 +35,8 @@ autoload singletons (`EventBus`, `SaveSystem`, `AudioManager`, `UIManager`).
 
 ## Modules & contracts
 
+### Services (autoloads)
+
 ### `core/event_bus.gd` — autoload `EventBus`
 Global decoupled publish/subscribe. Subscriber callables take **one** arg (payload).
 ```gdscript
@@ -71,6 +73,8 @@ UIManager.pop_panel(); UIManager.get_top(); UIManager.clear()
 ```
 > Not for persistent HUDs or Node2D panels.
 
+### State machine framework
+
 ### `fsm/state_machine.gd` + `fsm/state.gd` — `GxStateMachine` / `GxState`
 Minimal FSM for scene/level/flow control (and actor AI). Subclass `GxState` or use
 plain states + the `state_changed` signal.
@@ -81,6 +85,8 @@ sm.add_state(&"service", GxState.new())
 sm.state_changed.connect(func(from, to): ...)  # react to transitions
 sm.transition_to(&"prep")
 ```
+
+### Components (node-based)
 
 ### `components/gauge_component.gd` — `GxGaugeComponent` (Node)
 Bounded value `[0, max]` with optional time-based drain/refill.
@@ -119,10 +125,29 @@ float_distance / wobble.
 | `wobble` | float | preset | max horizontal random drift |
 | `duration` | float | 0.8 | total animation time (seconds) |
 
-### `utils/`
-- `GxMath` — `approach`, `remap_clamped`, `chance`, `pick_random` (all static)
-- `GxCooldown` — manual timer, `start/update(delta)/is_ready/progress`, `finished`
-- `GxObjectPool` — `acquire/release`, factory-based pooling
+### Utilities
+
+#### `GxMath` (static)
+```gdscript
+var v := GxMath.approach(5.0, 10.0, delta * 3.0)          # toward 10, +3/frame
+var r := GxMath.remap_clamped(0.5, 0.0, 1.0, 0.0, 100.0)   # → 50.0
+if GxMath.chance(0.2): print("20% hit")
+var pick = GxMath.pick_random(["a", "b", "c"])
+```
+
+#### `GxCooldown` (manual timer)
+```gdscript
+var cd := GxCooldown.new(2.0)
+cd.start(); cd.update(delta)
+if cd.is_ready(): print("ready")   # or connect cd.finished
+print(cd.progress())               # 0.0~1.0
+```
+
+#### `GxObjectPool` (factory-based)
+```gdscript
+var pool := GxObjectPool.new(func(): return Bullet.new(), 10)  # prewarm 10
+var b = pool.acquire(); pool.release(b)
+```
 
 ---
 

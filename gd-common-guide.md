@@ -26,22 +26,24 @@ gd-common ──submodule──> game-template ──克隆──> 你的新游�
 
 ---
 
-## 2. gd-common 每个模块（是什么 / 怎么用）
+## 2. 模块（按类别，与 §8.1 文件夹职责表对应）
 
 约定：共享 `class_name` 一律 `Gx` 前缀；autoload 名简洁（`EventBus`/`SaveSystem`/`AudioManager`/`UIManager`）。启用插件后 4 个 autoload 自动注册。
 
-| 模块 | 文件 | 类型 | 是什么 |
+| 类别 | 模块 | 文件 | 是什么 |
 |---|---|---|---|
-| EventBus | `core/event_bus.gd` | autoload | 全局发布/订阅事件总线（解耦核心） |
-| SaveSystem | `core/save_system.gd` | autoload | 通用存档机制（管「怎么存」，不管「存什么」） |
-| AudioManager | `core/audio_manager.gd` | autoload | 统一音效/音乐播放（素材留项目） |
-| UIManager | `core/ui_manager.gd` | autoload | Control 面板栈（瞬态模态弹窗） |
-| GxStateMachine / GxState | `fsm/` | 类 | 最小状态机（控场景/关卡/流程，也可用于 AI） |
-| GxGaugeComponent | `components/gauge_component.gd` | Node | 有界数值条（耐心/血量/体力/读条） |
-| GxFloatingNumber | `components/gx_floating_number.gd` | CanvasLayer | 浮动数字显示（伤害/暴击/治疗/得分弹出） |
-| GxMath / GxCooldown / GxObjectPool | `utils/` | 类 | 数学工具 / 冷却计时 / 对象池 |
+| **服务** | EventBus | `core/event_bus.gd` | 全局发布/订阅事件总线（解耦核心） |
+| | SaveSystem | `core/save_system.gd` | 通用存档机制（管「怎么存」，不管「存什么」） |
+| | AudioManager | `core/audio_manager.gd` | 统一音效/音乐播放（素材留项目） |
+| | UIManager | `core/ui_manager.gd` | Control 面板栈（瞬态模态弹窗） |
+| **状态机** | GxStateMachine / GxState | `fsm/` | 最小状态机（控场景/关卡/流程，也可用于 AI） |
+| **组件** | GxGaugeComponent | `components/gauge_component.gd` | 有界数值条（耐心/血量/体力/读条） |
+| | GxFloatingNumber | `components/gx_floating_number.gd` | 浮动数字显示（伤害/暴击/治疗/得分弹出） |
+| **工具** | GxMath / GxCooldown / GxObjectPool | `utils/` | 数学工具 / 冷却计时 / 对象池 |
 
-### 2.1 EventBus —— 跨模块通信
+### 2.1 服务（Autoload 全局单例）—— 处处可调的全局服务
+
+#### 2.1.1 EventBus —— 跨模块通信
 ```gdscript
 EventBus.subscribe(&"tokens_changed", _on_tokens)   # 消费者订阅
 EventBus.emit_event(&"tokens_changed", 120)          # 产者广播（payload 一个参数）
@@ -50,7 +52,7 @@ EventBus.unsubscribe(&"tokens_changed", _on_tokens)
 - 回调签名固定收 1 个 payload；失效监听者在 emit 时自动清理。
 - 其它：`has_subscribers / clear_event / clear_all`。
 
-### 2.2 SaveSystem —— 存档
+#### 2.1.2 SaveSystem —— 存档
 ```gdscript
 SaveSystem.save_to_slot(0, {"level": 3, "tokens": 120})   # 你组好 dict
 var data := SaveSystem.load_from_slot(0)                    # 没有则返回 {}
@@ -60,7 +62,7 @@ SaveSystem.set_version(2); SaveSystem.set_migrator(回调)    # 版本迁移
 - 存到 `user://saves/slot_N.cfg`，带 `__version`。
 - 「存什么」由项目的 GameData 决定；SaveSystem 只负责落盘/读盘。
 
-### 2.3 AudioManager —— 音频
+#### 2.1.3 AudioManager —— 音频
 ```gdscript
 AudioManager.play_sfx(stream, -3.0, 1.1)   # 流, 音量dB, 音高
 AudioManager.play_music(stream, 1.5)        # 淡入 1.5s
@@ -68,14 +70,16 @@ AudioManager.stop_music(1.0)                # 淡出
 ```
 音频**资源（.wav/.ogg）留在项目里**，把 stream 传进来。
 
-### 2.4 UIManager —— 模态面板栈
+#### 2.1.4 UIManager —— 模态面板栈
 ```gdscript
 var p := UIManager.push_panel(packed_scene)   # 场景根必须是 Control
 UIManager.pop_panel(); UIManager.get_top(); UIManager.clear()
 ```
 > ⚠️ 仅用于 **Control 瞬态弹窗**。不适合常驻 HUD 或 Node2D 面板（CyberCookV3 的弹窗是 Node2D、HUD 是常驻 autoload，所以 V3 没用它——它留给新项目的 Control 式 UI）。
 
-### 2.5 GxStateMachine / GxState —— 流程/场景状态机
+### 2.2 状态机框架 —— 不挂节点、纯逻辑的状态管理
+
+#### 2.2.1 GxStateMachine / GxState —— 流程/场景状态机
 ```gdscript
 const GxStateMachine := preload("res://addons/gd-common/fsm/state_machine.gd")
 const GxState := preload("res://addons/gd-common/fsm/state.gd")
@@ -86,10 +90,10 @@ sm.add_state(&"service", GxState.new())
 sm.state_changed.connect(func(from, to): ...)    # 监听切换做场景切换等
 sm.transition_to(&"prep")
 ```
-- 两种用法：子类化 `GxState`（重写 `_enter/_exit/_update`），或用纯 State + 监听 `state_changed`（详见下方 §2.5b 完整教程）。
+- 两种用法：子类化 `GxState`（重写 `_enter/_exit/_update`），或用纯 State + 监听 `state_changed`（详见下方 §2.2.2 完整教程）。
 - 头部用 `preload` 引用可避开「全局类缓存」依赖（headless/CI 更稳）。
 
-#### 2.5b 状态机完整教程
+##### 2.2.2 状态机完整教程
 
 GxStateMachine 有**两种典型场景**，选适合你的。
 
@@ -235,7 +239,9 @@ func sees_player() -> bool:
 
 两者**不冲突**——CyberCookV3 里 `GameFlow`（GxStateMachine）管流程，`robot.tscn`（godot_state_charts）管机器人 AI，各管各的。
 
-### 2.6 GxGaugeComponent —— 数值条组件
+### 2.3 组件（挂节点的）—— extends Node，给对象拼装能力
+
+#### 2.3.1 GxGaugeComponent —— 数值条组件
 ```gdscript
 var g := GxGaugeComponent.new()
 g.max_value = 30.0
@@ -248,7 +254,7 @@ g.reset(); g.drain(5); g.fill(2); g.auto_active = true
 ```
 - 用于：机器人耐心、血量、体力、读条/充能。`rate_scale` 可做急单×1.5 等加速。
 
-### 2.7 GxFloatingNumber —— 浮动数字
+#### 2.3.2 GxFloatingNumber —— 浮动数字
 ```gdscript
 const GxFloatingNumber := preload("res://addons/gd-common/components/gx_floating_number.gd")
 
@@ -275,10 +281,31 @@ fn.spawn_custom(pos, "???", {color = Color.VIOLET, font_size = 24, scale_start =
 - cfg 键：`color`(Color), `font_size`(int), `scale_start`(float), `float_distance`(float), `wobble`(float), `duration`(float)。
 - 用途：伤害数字、暴击弹出、得分/扣分、治疗数字、Miss 提示、Combo 文字。
 
-### 2.8 utils
-- `GxMath`（静态）：`approach / remap_clamped / chance / pick_random`
-- `GxCooldown`：`start / update(delta) / is_ready / progress`，信号 `finished`
-- `GxObjectPool`：`acquire / release`，工厂回调创建实例
+### 2.4 工具 —— 无状态/轻量，不进场景树
+
+#### GxMath（静态函数）
+```gdscript
+var v := GxMath.approach(5.0, 10.0, delta * 3.0)          # 朝 10 靠拢，每帧+3
+var r := GxMath.remap_clamped(0.5, 0.0, 1.0, 0.0, 100.0)   # → 50.0
+if GxMath.chance(0.2): print("20% 概率命中")
+var pick = GxMath.pick_random(["a", "b", "c"])             # 随机取一个
+```
+
+#### GxCooldown（手动计时器）
+```gdscript
+var cd := GxCooldown.new(2.0)     # 2 秒冷却
+cd.start()                        # 开始计时
+cd.update(delta)                  # 每帧推进
+if cd.is_ready(): print("好了")   # 或连 cd.finished 信号
+print(cd.progress())              # 0.0~1.0 进度
+```
+
+#### GxObjectPool（对象池）
+```gdscript
+var pool := GxObjectPool.new(func(): return Bullet.new(), 10)  # 工厂 + 预热 10 个
+var b = pool.acquire()    # 取一个（池空就新建）
+pool.release(b)           # 还回去复用
+```
 
 ---
 
