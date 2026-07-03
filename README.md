@@ -256,25 +256,37 @@ func _on_bullet_impact(bullet: Node) -> void:
 - `release(obj)` — return to pool. Calls `on_release` callback (if set) to reset state. Duplicate releases of the same object are detected and ignored with a warning.
 - `available_count()` — how many are currently in the pool.
 
-### `components/gx_floating_number.gd` — `GxFloatingNumber` (Control)
-Floating damage/score numbers that drift upward and fade out.
+### `components/gx_floating_number.gd` — `GxFloatingNumber` (CanvasLayer)
+Floating damage/score/heal numbers: pop in → float up → fade out. Auto-frees on finish.
 
 ```gdscript
 var fn := GxFloatingNumber.new()
-fn.text = "-5"
-fn.color = Color.RED
-fn.duration = 1.2
 add_child(fn)
-fn.show_at(global_position)    # animates upward, auto-frees on finish
+
+fn.spawn(global_position, "-5", GxFloatingNumber.Preset.DAMAGE)
+fn.spawn(global_position, "+20", GxFloatingNumber.Preset.HEAL)
+fn.spawn(global_position, "CRIT!", GxFloatingNumber.Preset.CRITICAL)
+
+# Custom style per invocation:
+fn.spawn_custom(pos, "MISS", {"color": Color.GRAY, "duration": 0.6})
+
+# Override individual preset params:
+fn.spawn(pos, "+100", GxFloatingNumber.Preset.HEAL,
+    {"duration": 1.5, "float_distance": 60.0})
 ```
+- 5 presets: `DEFAULT`, `DAMAGE` (red), `HEAL` (green), `CRITICAL` (orange, large), `MUTED` (gray)
+- `spawn()` takes optional `overrides: Dictionary` to tweak color/duration/float_distance etc.
+- `spawn_custom()` takes full `cfg: Dictionary` with keys: `color`, `font_size`, `scale_start`, `float_distance`, `wobble`, `duration`.
+- Each call creates an independent label that self-destructs after animation.
 
 ---
 
-## Reference integrations (CyberCookV3)
+## Reference patterns (standalone — no project dependency)
 
-| Pattern | Where to copy from |
+| Pattern | Quick snippet |
 |---|---|
-| Scene/flow FSM | `autoload/game_flow.gd` (GxStateMachine + scene swap) |
-| Gauge component | `modules/customer/robot.gd` (patience via GxGaugeComponent) |
-| EventBus bridge + subscribe | `autoload/state.gd` + `modules/global_hud/global_hud.gd` |
-| SaveSystem usage | `autoload/state.gd` (`save_game`/`load_game`) |
+| Scene flow via FSM | `GxStateMachine.new(self)` → `add_state` → `start` → `state_changed` → `change_scene_to_file` |
+| Save/load game data | Build a flat `Dictionary` → `SaveSystem.save_to_slot(0, data)` → `load_from_slot(0)` |
+| Audio registry | Thin wrapper autoload that maps string keys → `load("res://...wav")` → `SoundManager.play_*()` |
+| Health/patience bar | `GxGaugeComponent` → `value_changed` → sync `ProgressBar.value` |
+| Attack cooldown UI | `GxCooldown` → `tick(delta)` in `_process` → read `progress()` for shader/fill | |

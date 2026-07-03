@@ -1,34 +1,65 @@
 # gd-common 通用层 / 跨项目复用指南
 
-> 本文是整套复用系统的**权威总览**（随 gd-common 仓库走）。各模块的英文 API 速查见同目录 `README.md`。
+> 本文是整套复用系统的**权威总览**（随 gd-common 仓库走）。各模块英文 API 速查见同目录 `README.md`。
 > 适用引擎：Godot 4.x（已在 4.7 验证）。
+
+---
+
+## 0. 十分钟上手
+
+启用插件后，你可以立即使用 4 个全局 autoload。下面是一个完整的迷你脚本——把它挂到任意场景的根节点，运行即见效果：
+
+```gdscript
+extends Node
+
+func _ready() -> void:
+	# 1. 订阅事件
+	EventBus.subscribe(&"hello", _on_hello)
+
+	# 2. 存档
+	SaveSystem.save_to_slot(0, {"name": "MyGame", "score": 42})
+
+	# 3. 读档
+	var data := SaveSystem.load_from_slot(0)
+	print("存档数据: ", data)
+
+	# 4. 播放音效（文件不存在时静默跳过）
+	SoundManager.play_ui_sound(load("res://sfx/ui_click.wav"))
+
+	# 5. 发射事件
+	EventBus.emit_event(&"hello", "世界")
+
+
+func _on_hello(msg: String) -> void:
+	print("收到事件: ", msg)   # → 收到事件: 世界
+```
+
+> 以上脚本不依赖任何特定项目——把 `res://sfx/ui_click.wav` 换成你自己的音频文件即可。其余模块在下面展开。
 
 ---
 
 ## 1. 总览：三个仓库
 
 ```
-gd-common        共享通用层（Godot 插件，纯 GDScript）
-game-template    新项目模板（已接好 gd-common + GameData/GameManager 桩）
-CyberCookV3      首个消费项目（演示如何接入与使用）
+gd-common       共享通用层（Godot 插件，纯 GDScript）
+game-template   新项目模板（已接好 gd-common + GameData/GameManager 桩）
+你的新游戏       从 game-template 克隆，改 GameData / GameManager 即可
 ```
 
 关系：
 
 ```
 gd-common ──submodule──> game-template ──克隆──> 你的新游戏
-    └──────submodule──> CyberCookV3（参考实现）
 ```
 
 - **gd-common**：与游戏类型无关的基础设施。只放通用件，**绝不放具体玩法**。
 - **game-template**：开箱即完整的项目骨架，新游戏从它克隆。
-- **CyberCookV3**：真实接入示例，每个模块的用法都能在这里找到参考。
 
 ---
 
-## 2. gd-common 每个模块（是什么 / 怎么用）
+## 2. gd-common 每个模块（全接口教学）
 
-约定：共享 `class_name` 一律 `Gx` 前缀；autoload 名简洁（`EventBus`/`SaveSystem`/`SoundManager`/`UIManager`）。启用插件后 4 个 autoload 自动注册。
+约定：`class_name` 一律 `Gx` 前缀；autoload 名简洁（`EventBus` / `SaveSystem` / `SoundManager` / `UIManager`）。启用插件后 4 个 autoload 自动注册。
 
 | 模块 | 文件 | 类型 | 是什么 |
 |---|---|---|---|
@@ -38,240 +69,711 @@ gd-common ──submodule──> game-template ──克隆──> 你的新游�
 | UIManager | `core/ui_manager.gd` | autoload | Control 面板栈（瞬态模态弹窗） |
 | GxStateMachine / GxState | `fsm/` | 类 | 最小状态机（控场景/关卡/流程，也可用于 AI） |
 | GxGaugeComponent | `components/gauge_component.gd` | Node | 有界数值条（耐心/血量/体力/读条） |
-| GxFloatingNumber | `components/gx_floating_number.gd` | Control | 浮字：伤害/得分数字漂起淡出 |
-| GxMath / GxCooldown / GxObjectPool | `utils/` | 类 | 数学工具 / 冷却计时 / 对象池 |
+| GxFloatingNumber | `components/gx_floating_number.gd` | CanvasLayer | 浮字：伤害/得分数字漂起淡出 |
+| GxCooldown / GxMath / GxObjectPool | `utils/` | 类 | 冷却计时 / 数学工具 / 对象池 |
+
+---
 
 ### 2.1 EventBus —— 跨模块通信
+
+**Why**：两个模块需要通信但不应该互相持有引用。得分系统发射 `&"enemy_killed"`，UI / 音频 / 成就系统各自订阅——它们不知道彼此存在。
+
+| API | 说明 |
+|---|---|
+| `subscribe(event, callable)` | 订阅事件。重复订阅自动忽略 |
+| `unsubscribe(event, callable)` | 取消订阅。事件无订阅者时自动清理 |
+| `emit_event(event, payload)` | 广播事件。payload 可选（一个 Variant）。失效监听者自动清理 |
+| `has_subscribers(event)` | 该事件是否有监听者 |
+| `clear_event(event)` | 清除该事件的所有订阅 |
+| `clear_all()` | 清除全部订阅（场景切换用） |
+
 ```gdscript
-EventBus.subscribe(&"tokens_changed", _on_tokens)   # 消费者订阅
-EventBus.emit_event(&"tokens_changed", 120)          # 产者广播（payload 一个参数）
-EventBus.unsubscribe(&"tokens_changed", _on_tokens)
+# —— 生产者（任意模块） ——
+EventBus.emit_event(&"score_changed", 100)
+
+# —— 消费者 ——
+func _ready() -> void:
+    EventBus.subscribe(&"score_changed", _on_score)
+
+func _on_score(new_score: int) -> void:
+    $ScoreLabel.text = str(new_score)
+
+# 离开场景时取消（非必须——emit 时自动清理 freed listener）
+# EventBus.unsubscribe(&"score_changed", _on_score)
+
+# 调试/查询
+if EventBus.has_subscribers(&"score_changed"):
+    print("有人在听 score_changed")
+
+# 场景切换前彻底清理某个事件
+EventBus.clear_event(&"score_changed")
+
+# 或者全部清掉
+EventBus.clear_all()
 ```
-- 回调签名固定收 1 个 payload；失效监听者在 emit 时自动清理。
-- 其它：`has_subscribers / clear_event / clear_all`。
+
+---
 
 ### 2.2 SaveSystem —— 存档
+
+**Why**：存档逻辑散落各处会导致格式不一致、迁移困难。SaveSystem 只管「怎么存到磁盘」，你的 GameData 决定「存什么字段」。
+
+| API | 说明 |
+|---|---|
+| `set_version(v: int)` | 设置当前存档格式版本号 |
+| `set_migrator(callable)` | 设置版本迁移回调：`func(data, from_version, to_version) -> Dictionary` |
+| `save_to_slot(slot, data: Dictionary)` | 存到 `user://saves/slot_N.cfg`。返回 `bool` |
+| `load_from_slot(slot)` | 读档。无档则返回 `{}`。版本不匹配自动调 migrator |
+| `has_slot(slot)` | 该槽位是否有存档 |
+| `delete_slot(slot)` | 删除指定槽位 |
+| `list_slots()` | 返回所有有效槽位号（排序后的 `Array[int]`） |
+| `saved(slot)` | 信号：存档成功时发射 |
+| `loaded(slot)` | 信号：读档成功时发射 |
+
 ```gdscript
-SaveSystem.save_to_slot(0, {"level": 3, "tokens": 120})   # 你组好 dict
-var data := SaveSystem.load_from_slot(0)                    # 没有则返回 {}
-SaveSystem.has_slot(0); SaveSystem.delete_slot(0); SaveSystem.list_slots()
-SaveSystem.set_version(2); SaveSystem.set_migrator(回调)    # 版本迁移
-# 可观测信号：
-SaveSystem.saved.connect(func(slot): ...)                   # 存档确认
-SaveSystem.loaded.connect(func(slot): ...)                  # 读档成功
+# —— 基础存档 ——
+SaveSystem.save_to_slot(0, {"level": 3, "coins": 120})
+var data := SaveSystem.load_from_slot(0)           # {} 如果没档
+print(data.get("level", 1))                         # → 3
+
+# —— 查询 ——
+if SaveSystem.has_slot(0):
+    print("有存档")
+
+for slot in SaveSystem.list_slots():
+    print("槽位 %d 存在" % slot)
+
+# —— 删除 ——
+SaveSystem.delete_slot(0)
+
+# —— 可观测（auto-save 指示器） ——
+SaveSystem.saved.connect(func(slot): print("存档成功 slot=%d" % slot))
+SaveSystem.loaded.connect(func(slot): print("读档成功 slot=%d" % slot))
+
+# —— 版本迁移完整示例 ——
+# V1: {"gold": 100}
+# V2: {"coins": 1000}  # 金币改名，数值 ×10
+SaveSystem.set_version(2)
+SaveSystem.set_migrator(func(data: Dictionary, from_v: int, to_v: int) -> Dictionary:
+    if from_v == 1 and to_v == 2:
+        var gold: int = data.get("gold", 0)
+        data.erase("gold")
+        data["coins"] = gold * 10
+    return data
+)
+# 现在 load V1 存档会自动转换
 ```
-- 存到 `user://saves/slot_N.cfg`，带 `__version`。
-- 「存什么」由项目的 GameData 决定；SaveSystem 只负责落盘/读盘。
+
+---
 
 ### 2.3 SoundManager —— 音频
-**为什么需要 process-mode 拆分**：当 `get_tree().paused = true` 打开暂停菜单时，SFX 应该噤声但 BGM 的淡出动画不能卡在半路——否则恢复时音量跳变。Music root 用 `PROCESS_MODE_ALWAYS` 保证 tween 始终运行。
+
+**Why**：`get_tree().paused = true` 打开暂停菜单时，SFX 应噤声但 BGM 淡出动画不能卡死——否则恢复时音量跳变。SoundManager 把 SFX/Ambient 和 Music 的 process-mode 拆分，前者随场景暂停，后者始终 tick。
+
+| API | 说明 |
+|---|---|
+| `play_sound(stream)` | 单次 SFX。8 通道池，全忙时抢占最旧 |
+| `play_ui_sound(stream)` | 同 `play_sound` 的别名 |
+| `stop_all_sfx()` | 切断所有 SFX（场景切换用） |
+| `play_music(stream, crossfade)` | BGM 淡入。crossfade=0 即硬切 |
+| `stop_music(fade)` | 淡出 BGM |
+| `pause_music(fade)` | 淡到静音，保留播放位置 |
+| `resume_music(fade)` | 从暂停恢复 |
+| `is_music_paused()` | 查询暂停状态 |
+| `play_ambient_sound(stream, fade)` | 循环环境音。相同文件重复播放会先停旧的 |
+| `stop_ambient_sound(stream, fade)` | 停止指定环境音 |
+| `stop_all_ambient_sounds(fade)` | 场景切换时清理所有环境音 |
+| `set_bus_volume_db(bus_name, db)` | 设置 Audio Bus 音量（Master/SFX/Music 等） |
+| `music_paused` / `music_resumed` | 信号 |
 
 ```gdscript
-# 实际用法：载入音频资源，传进来
-var stream := load("res://sfx/ui_click.wav")
-SoundManager.play_sound(stream)             # 单次 SFX（8 通道池）
-SoundManager.play_ui_sound(stream)          # 同上
+# —— 载入音频资源（文件放你的项目里，不放在 gd-common） ——
+var click := load("res://sfx/ui_click.wav")
+var bgm   := load("res://bgm/service.wav")
+var amb   := load("res://sfx/kitchen.wav")
 
-SoundManager.play_music(load("res://bgm/service.wav"), 1.5)  # BGM 淡入
-SoundManager.stop_music(1.5)                # 淡出
+# —— SFX ——
+SoundManager.play_sound(click)          # 单次播放
+SoundManager.play_ui_sound(click)       # 同上（语义化别名）
+SoundManager.stop_all_sfx()             # 切场景时切断所有 SFX
 
-SoundManager.play_ambient_sound(load("res://sfx/kitchen.wav"), 2.0)
-SoundManager.stop_all_ambient_sounds(1.5)   # 场景切换时清理
+# —— BGM ——
+SoundManager.play_music(bgm, 1.5)       # 1.5 秒淡入
+SoundManager.stop_music(1.5)            # 淡出
 
-# 暂停恢复（不打断播放位置）
-SoundManager.pause_music(0.5)               # 淡到静音
-SoundManager.resume_music(0.5)              # 淡回上次音量
+# —— 暂停/恢复（不丢播放位置） ——
+SoundManager.pause_music(0.5)           # 半秒淡到静音
+SoundManager.resume_music(0.5)          # 半秒淡回
+if SoundManager.is_music_paused():
+    print("BGM 已暂停")
+
+SoundManager.music_paused.connect(func(): print("BGM 暂停了"))
+SoundManager.music_resumed.connect(func(): print("BGM 恢复了"))
+
+# —— 环境音 ——
+SoundManager.play_ambient_sound(amb, 2.0)      # 2 秒淡入循环
+SoundManager.stop_ambient_sound(amb, 1.5)      # 停止这一个
+SoundManager.stop_all_ambient_sounds(1.5)       # 场景切换——全部清
+
+# —— 音量调节 ——
+SoundManager.set_bus_volume_db("Master", -6.0)  # 全局降 6dB
+SoundManager.set_bus_volume_db("SFX", 0.0)      # SFX 恢复 0dB
 ```
-- `pause_music()` 才是正确选择 —— `set_bus_volume_db("Music", -60)` 在 pause 时 bus 不 tick，tween 失效。
-- SFX 池 8 通道：全忙时**抢占最旧**通道（短 UI 反馈设计；长 ambience 用 `play_ambient_sound`）。
-- `play_music(新歌)` 清掉 pause 内部状态，防止 `resume_music` 误恢复旧歌音量。
-- 环境音按流文件的 `resource_path` 作 key（生成式流用 `instance_id`）。同一文件 `load()` 两次指向同一个 ambient 槽位——重复播放会先停旧再播新。
+
+---
 
 ### 2.4 UIManager —— 模态面板栈
-**为什么**：手动 `add_child` 弹出对话框时要记住"底下是谁"、恢复谁的 `visible`——面板二层三层嵌套时极其脆弱。UIManager 自动 hide 下层、show 上层，你只需 push/pop。
+
+**Why**：手动 `add_child` 弹出对话框时，要记住"底下是谁"、恢复 `visible`、处理嵌套（设置 → 键位 → 确认框）。三层嵌套时极易出 bug。UIManager 自动 hide 下层、show 上层，用 push/pop 管理。
+
+| API | 说明 |
+|---|---|
+| `push_panel(packed: PackedScene)` | 实例化 scene 并推入栈顶。root 必须是 Control |
+| `push_panel_node(panel: Control)` | 推入一个已实例化的 Control |
+| `pop_panel()` | 弹出并 free 栈顶面板，显示下一层。空栈 no-op |
+| `get_top()` | 返回栈顶 Control（或 null） |
+| `clear()` | free 全部面板并清空栈 |
+| `stack_size()` | 当前栈深度 |
+| `panel_pushed(panel)` / `panel_will_pop(panel)` / `panel_popped` | 信号 |
 
 ```gdscript
-UIManager.push_panel(preload("res://ui/settings.tscn"))   # 打开设置
-# 用户在设置里点「改键位」→ push 键位面板：
+# —— 弹窗 ——
+var settings := UIManager.push_panel(preload("res://ui/settings.tscn"))
+# 用户在设置里点「改键位」：
 UIManager.push_panel(preload("res://ui/keybind.tscn"))
-# 关闭键位面板 → 自动显示回设置：
-UIManager.pop_panel()
-UIManager.get_top()    # 取最上层面板（或 null）
-UIManager.clear()      # 场景切换时全清
 
-# 可观测信号：
-UIManager.panel_pushed.connect(func(p): ...)     # 面板被推入
-UIManager.panel_will_pop.connect(func(p): ...)   # 即将弹出（在此存状态）
-UIManager.panel_popped.connect(func(): ...)      # 弹出完成
+# —— 逐层关闭 ——
+UIManager.pop_panel()           # 关闭键位 → 回到设置
+print(UIManager.stack_size())   # → 1
+print(UIManager.get_top())      # → settings 的 Control 引用
+
+UIManager.pop_panel()           # 关闭设置 → 回到游戏
+print(UIManager.get_top())      # → null
+
+# —— 场景切换时全清 ——
+UIManager.clear()
+
+# —— 推入已实例化的面板 ——
+var already_made := preload("res://ui/popup.tscn").instantiate()
+already_made.some_data = 42
+UIManager.push_panel_node(already_made)
+
+# —— 监听 ——
+UIManager.panel_pushed.connect(func(p): print("打开: ", p.name))
+UIManager.panel_will_pop.connect(func(p): print("即将关闭: ", p.name))
+UIManager.panel_popped.connect(func(): print("栈深度 = ", UIManager.stack_size()))
 ```
-> ⚠️ 仅用于 **Control 瞬态弹窗**。不适合常驻 HUD 或 Node2D 面板（CyberCookV3 的弹窗是 Node2D、HUD 是常驻 autoload，所以 V3 没用它——它留给新项目的 Control 式 UI）。
 
-### 2.5 GxStateMachine / GxState —— 流程/场景状态机
-**基础流（保留）**:
+> ⚠️ 仅用于 **Control** 瞬态弹窗。不适合常驻 HUD 或 Node2D 面板。
+
+---
+
+### 2.5 GxStateMachine / GxState —— 状态机
+
+**Why**：用 `if phase == "prep"` 和散落的 `match` 管理流程会变成不可维护的意大利面。状态机把所有转换规则集中一处，状态自带 enter/exit 钩子，新增状态不碰已有代码。
+
+#### 基础用法（场景流程）
+
+| API | 说明 |
+|---|---|
+| `_init(ctx)` | 构造。ctx 任意数据，states 通过 `machine.context` 读取 |
+| `add_state(name, state)` | 注册状态。返回 self 支持链式调用 |
+| `start(initial)` | 启动并进入初始状态 |
+| `transition_to(target)` | 切换状态。自转移记为 warning + no-op |
+| `current_name()` | 当前状态名（StringName） |
+| `current_state()` | 当前 GxState 对象 |
+| `state_changed(from, to)` | 信号：状态切换完成 |
+
 ```gdscript
 const GxStateMachine := preload("res://addons/gd-common/fsm/state_machine.gd")
 const GxState := preload("res://addons/gd-common/fsm/state.gd")
 
-var sm := GxStateMachine.new(self)               # self = context
-sm.add_state(&"prep", GxState.new())
-sm.add_state(&"service", GxState.new())
-sm.state_changed.connect(func(from, to): ...)    # 监听切换做场景切换等
-sm.transition_to(&"prep")
+var sm := GxStateMachine.new(self)          # self = 上下文
+sm.add_state(&"prep",    GxState.new()) \
+  .add_state(&"service", GxState.new()) \
+  .add_state(&"result",  GxState.new())
+sm.state_changed.connect(func(from, to): print(from, " → ", to))
+sm.start(&"prep")
+
+# 切换
+sm.transition_to(&"service")
+print(sm.current_name())   # → &"service"
+print(sm.is_in_state(&"service"))  # → true
 ```
 
-**事件驱动 + 守卫**（PR-0001 新增）:
+#### 子类化 GxState（重写钩子，用于 AI）
+
+```gdscript
+# —— patrol_state.gd ——
+class_name PatrolState
+extends GxState
+
+func _enter() -> void:
+    machine.context.animation_player.play("walk")
+
+func _update(delta: float) -> void:
+    var body: CharacterBody2D = machine.context
+    body.velocity = body.patrol_direction * body.speed
+    body.move_and_slide()
+
+func _exit() -> void:
+    machine.context.animation_player.stop()
+
+# —— 使用 ——
+var sm := GxStateMachine.new($Enemy)
+sm.add_state(&"patrol", PatrolState.new())
+sm.start(&"patrol")
+# 在 _process 中驱动：
+# func _process(delta): sm.update(delta)
+```
+
+#### 事件驱动 + 守卫（PR-0001）
+
+| API | 说明 |
+|---|---|
+| `add_transition(from, event, target, guard?)` | 注册一条转移规则。guard 返回 false 则阻止 |
+| `try_transition(event)` | 在当前状态上尝试匹配 event → guard → transition |
+| `is_in_state(name)` | 精确匹配。start() 前永远返回 false |
+| `attach_to(host)` / `detach()` | 记录/清除关联的 Node（不 add_child） |
+| `guard_failed(from, event)` | 信号：守卫返回 false |
+| `unhandled_event(event)` | 信号：事件无匹配转移 |
+| `update(delta)` / `physics_update(delta)` | 驱动当前状态的钩子 |
+
 ```gdscript
 var sm := GxStateMachine.new()
-sm.attach_to(self)                                # 记 host（.attached_host 只读）
-sm.add_state(&"idle",    GxState.new())
-sm.add_state(&"walk",    GxState.new())
-sm.add_state(&"attack",  GxState.new())
+sm.attach_to(self)
+sm.add_state(&"idle",   IdleState.new()) \
+  .add_state(&"walk",   WalkState.new()) \
+  .add_state(&"attack", AttackState.new())
 
-# 表驱动：(from, event) → (target, guard?)
-sm.add_transition(&"idle",   &"move_pressed",   &"walk")
+# 表驱动转移
+sm.add_transition(&"idle",   &"move",  &"walk")
+sm.add_transition(&"walk",   &"move",  &"idle")
 sm.add_transition(&"walk",   &"attack_pressed", &"attack",
     func() -> bool: return $Weapon.can_attack())   # 守卫
+sm.add_transition(&"attack", &"attack_done",  &"idle")
 
 sm.start(&"idle")
-sm.try_transition(&"move_pressed")                # → walk
-sm.try_transition(&"attack_pressed")              # 守卫放行 → attack
+
+# 在 _process 中驱动：
+func _process(delta: float) -> void:
+    sm.update(delta)
+
+func _physics_process(delta: float) -> void:
+    sm.physics_update(delta)
+
+# 触发事件（替代直接调 transition_to）
+func _on_move_pressed() -> void:   sm.try_transition(&"move")
+func _on_attack_pressed() -> void: sm.try_transition(&"attack_pressed")
+
+# 查询 + 信号
+print(sm.is_in_state(&"walk"))
+sm.guard_failed.connect(func(from, ev): print("守卫拒绝 ", from, " → ", ev))
+sm.unhandled_event.connect(func(ev): print("无匹配转移: ", ev))
+
+# detach
+sm.detach()   # attached_host 变 null
 ```
 
-**查询 & 信号**（PR-0001 新增）:
+---
+
+### 2.6 GxGaugeComponent —— 数值条
+
+**Why**：血量、耐心、体力、充能条——它们都是「有界数值 + 可选随时间变化 + 归零/满触发」。一个通用组件替代重复的手写 `var hp / var max_hp / var hp_bar`。
+
+| API | 说明 |
+|---|---|
+| `max_value` | 上限。运行时修改自动 clamp `current` 并 emit `value_changed` |
+| `current` | 当前值（只读建议，可用 `set_value` 写） |
+| `start_full` | 初始化时是否填满（默认 true） |
+| `auto_rate` | 每秒变化量。正=耗向 0，负=回向 max，0=手动 |
+| `auto_active` | 是否启用自动变化 |
+| `rate_scale` | `auto_rate` 的倍率（不改 auto_rate 原值） |
+| `drain(amount)` | 减少（clamped） |
+| `fill(amount)` | 增加（clamped） |
+| `set_value(v)` | 直接设置（clamped）。同值不重复 emit |
+| `reset()` | 重置到初始值 |
+| `ratio()` | 返回 `current / max_value`（0~1） |
+| `is_depleted()` | `current <= 0` |
+| `value_changed(current, max)` / `depleted` / `filled` | 信号 |
+
 ```gdscript
-sm.is_in_state(&"walk")                           # 严格名匹配（不引入 HSM）
-sm.guard_failed.connect(func(from, ev): ...)      # 守卫拒绝
-sm.unhandled_event.connect(func(ev): ...)         # 事件无匹配转换
+var patience := GxGaugeComponent.new()
+patience.max_value = 30.0
+patience.start_full = true
+patience.auto_rate = 1.0       # 每秒减 1（耐心倒计时）
+patience.auto_active = false   # 客人到达时才启动
+patience.rate_scale = 1.0      # 急单客人设为 1.5
+add_child(patience)
+
+# —— 对接 ProgressBar ——
+patience.value_changed.connect(func(cur, mx):
+    $ProgressBar.value = cur
+    $ProgressBar.max_value = mx
+)
+
+# —— 归零触发 ——
+patience.depleted.connect(func():
+    print("耐心耗尽，客人走了")
+)
+
+# —— 填满触发 ——
+patience.filled.connect(func():
+    print("充能完毕！")
+)
+
+# —— 手动操作 ——
+patience.reset()               # current = max_value
+patience.drain(5)              # -5
+patience.fill(2)               # +2
+patience.set_value(15)         # 直接设
+patience.auto_active = true    # 开始自动消耗
+
+# —— 查询 ——
+print(patience.ratio())         # → 0.67 (20/30)
+print(patience.is_depleted())   # → false
+print(patience.current)         # → 20.0
+
+# —— 动态加速（不污染 auto_rate） ——
+patience.rate_scale = 2.0      # 消耗速度翻倍
 ```
 
-- 两种用法：子类化 `GxState`（重写 `_enter/_exit/_update`），或用纯 State + 监听 `state_changed`。
-- 头部用 `preload` 引用可避开「全局类缓存」依赖（headless/CI 更稳）。
-- `attach_to` 只记引用、**不 add_child**，状态机仍 `extends RefCounted`，生命周期由 `update()` / `physics_update()` 的外部驱动者负责。
-- `is_in_state` 是精确匹配；`start()` 之前永远返回 `false`。HSM 父态继承是后续 PR。
-- `add_transition` 错误策略：`push_error + return self`（不 `assert`，release 不剥）。`transition_to` 自转移走 `push_warning` + 静默。
-
-### 2.6 GxGaugeComponent —— 数值条组件
-```gdscript
-var g := GxGaugeComponent.new()
-g.max_value = 30.0
-g.auto_rate = 1.0        # 每秒消耗 1（正=耗向0，负=回向max，0=纯手动）
-g.auto_active = false    # 是否随时间自动变化
-add_child(g)
-g.value_changed.connect(_on_changed)   # (current, max)
-g.depleted.connect(_on_empty)          # 归零
-g.reset(); g.drain(5); g.fill(2); g.auto_active = true
-```
-- 用于：机器人耐心、血量、体力、读条/充能。`rate_scale` 可做急单×1.5 等加速。
-- 运行时修改 `max_value` 会自动 clamp `current` 到新上界并发射 `value_changed`。
+---
 
 ### 2.7 GxCooldown —— 冷却计时器
+
+**Why**：技能冷却、冲刺间隔、攻击间隔——到处都需要"过 N 秒才能再用"。GxCooldown 是纯 RefCounted 的计数器，你手动 `tick(delta)` 推进它，不依赖 `_process`。
+
+| API | 说明 |
+|---|---|
+| `_init(duration)` | 构造。默认 1 秒 |
+| `start(duration?)` | 开始计时。可选覆盖 duration |
+| `tick(delta)` | 推进计时。归零时 emit `finished` |
+| `is_ready()` | `time_left <= 0`（可以用） |
+| `is_running()` | `time_left > 0`（正在冷却） |
+| `progress()` | 返回 0~1（0=刚开始，1=已完成） |
+| `cancel()` | 归零但不发 `finished` 信号（打断） |
+| `update(delta)` | ⚠️ 兼容旧代码，同 `tick()` |
+| `finished` | 信号：计时结束 |
+| `duration` / `time_left` | 可读写属性 |
+
 ```gdscript
-var _dash_cd := GxCooldown.new(2.0)           # 2 秒冷却
+var dash_cd := GxCooldown.new(2.0)
+var atk_cd  := GxCooldown.new(0.5)
 
 func _process(delta: float) -> void:
-    _dash_cd.tick(delta)                      # 手动推进
+    dash_cd.tick(delta)
+    atk_cd.tick(delta)
 
 func _on_dash_input() -> void:
-    if not _dash_cd.is_ready(): return        # 冷却中
+    if not dash_cd.is_ready():
+        return
     _perform_dash()
-    _dash_cd.start()                          # 重新计时
+    dash_cd.start()
 
+func _on_attack_input() -> void:
+    if atk_cd.is_running():
+        return
+    _attack()
+    atk_cd.start()
+
+# —— UI 绑定（冷却图标进度条） ——
+$CooldownIcon.material.set_shader_parameter("progress",
+    dash_cd.progress())         # 0.0 → 1.0
+
+# —— 信号连接 ——
+atk_cd.finished.connect(func():
+    print("攻击冷却完毕")
+    $AttackIcon.modulate = Color.WHITE
+)
+
+# —— 打断（不触发 finished） ——
 func _on_player_died() -> void:
-    _dash_cd.cancel()                         # 中断 — 不发 finished 信号
+    dash_cd.cancel()             # 静默重置，不触发 finished
+    atk_cd.cancel()
+
+# —— 查询 ——
+print(dash_cd.is_running())      # → true（冷却中）
+print(dash_cd.progress())        # → 0.35
+print(dash_cd.time_left)         # → 1.3
 ```
-- `start(秒?) / tick(delta) / is_ready() / is_running() / progress() / cancel()`
-- `is_running()` 当 `time_left > 0` 返回 `true`（区分"活跃冷却中"和"已归零"）。
-- 信号 `finished` — 归零时发一次。`cancel()` 不发。
-- 兼容：`.update(delta)` 仍可用（委托给 `.tick()`）。
-- 用于：技能冷却、冲刺间隔、攻击间隔。
+
+---
 
 ### 2.8 GxMath —— 数学工具（纯静态）
+
+**Why**：几个高频数学运算反复写很啰嗦。全静态方法，不需要 `new()`。
+
+| API | 说明 |
+|---|---|
+| `approach(current, target, delta)` | 向 target 逼近 delta 距离，不越界 |
+| `remap_clamped(v, in_min, in_max, out_min, out_max)` | 线性重映射 + clamp |
+| `chance(probability)` | 传入 0~1，返回 `true` 的概率 |
+| `pick_random(arr: Array)` | 随机取一个元素。空数组返回 `null` |
+
 ```gdscript
-GxMath.approach(5.0, 10.0, 2.0)         # → 7.0
-GxMath.remap_clamped(0.5, 0, 1, 0, 100) # → 50.0
-GxMath.chance(0.3)                       # 30% 概率 true
-GxMath.pick_random([1, 2, 3])            # 随机一个
+# approach: 平滑追踪
+var cam_x := 0.0
+func _process(delta: float) -> void:
+    cam_x = GxMath.approach(cam_x, player.position.x, 200.0 * delta)
+
+# remap_clamped: 映射区间
+var health_pct := GxMath.remap_clamped(hp, 0.0, max_hp, 0.0, 1.0)
+var angle := GxMath.remap_clamped(mouse_x, 0.0, screen_w, -45.0, 45.0)
+
+# chance: 概率判定
+if GxMath.chance(0.3):
+    drop_rare_item()           # 30% 概率
+
+# pick_random: 随机抽取
+var enemy := GxMath.pick_random(alive_enemies)   # 随机一个目标
+var quote := GxMath.pick_random(["你好", "再见", "保重"])
+print(quote)   # → "再见"（随机）
 ```
-- `approach(当前, 目标, 步长)` — 平滑逼近，不越界。
-- `remap_clamped(值, 入min, 入max, 出min, 出max)` — 线性重映射。
-- `chance(概率)` — `randf() < 概率`。
-- `pick_random(arr)` — 空则 `null`。
+
+---
 
 ### 2.9 GxObjectPool —— 对象池
+
+**Why**：频繁 `instantiate()` + `queue_free()` 子弹/粒子/浮字会造成 GC 抖动。对象池预热一批实例，用完归还而非销毁。
+
+| API | 说明 |
+|---|---|
+| `_init(factory, prewarm, on_release?)` | 工厂回调创建新实例。on_release 归池前重置 |
+| `acquire()` | 从池取一个实例。池空则调 factory 新造 |
+| `release(obj)` | 归还实例。先调 on_release，再入池。重复归还自动忽略并 warning |
+| `available_count()` | 池中当前可用数量 |
+
 ```gdscript
-# 工厂回调 + 可选重置回调（归池前清脏状态）
-var _pool := GxObjectPool.new(func():
-    return preload("res://bullet.tscn").instantiate(),
-    5,                                # 预热 5 个
-    func(obj): obj.visible = false)   # 重置
+var _bullet_pool := GxObjectPool.new(
+    func() -> Node: return preload("res://bullet.tscn").instantiate(),
+    5,                                   # 预热 5 个
+    func(obj):                           # 归池前重置
+        obj.visible = false
+        obj.process_mode = Node.PROCESS_MODE_DISABLED
+)
 
 func _fire() -> void:
-    var b := _pool.acquire()        # 从池取（不够才 new）
+    var b := _bullet_pool.acquire()
+    b.global_position = $Muzzle.global_position
     b.visible = true
-    add_child(b)
+    b.process_mode = Node.PROCESS_MODE_INHERIT
+    get_tree().current_scene.add_child(b)
 
-func _on_impact(bullet) -> void:
-    _pool.release(bullet)           # 归还复用
+func _on_bullet_hit(bullet: Node) -> void:
+    _bullet_pool.release(bullet)       # 归还（自动调 on_release）
+
+# 重复归还不崩溃
+func _bad_code() -> void:
+    var b := _bullet_pool.acquire()
+    _bullet_pool.release(b)
+    _bullet_pool.release(b)            # → push_warning + 忽略
+
+print(_bullet_pool.available_count())  # → 5
 ```
-- `acquire()` — 获取实例。`release(obj)` — 归还。`available_count()` — 池中数量。
-- 重复 release 同一对象会被检测并忽略（带 warning）。`on_release` 回调在入池前调用。
+
+---
 
 ### 2.10 GxFloatingNumber —— 浮字
-```gdscript
-var fn := GxFloatingNumber.new()
-fn.text = "-5"
-fn.color = Color.RED
-fn.duration = 1.2
-add_child(fn)
-fn.show_at(global_position)
-```
-- 自动漂起 + 淡出，动画结束后 `queue_free`。
-- 用于：伤害数字、得分弹出、金币 +N 等即时反馈。
 
----
+**Why**：伤害数字、得分弹出、金币 +N——所有游戏都需要"数字从某个位置飘起淡出"。一个 `spawn()` 调用即完成全部动画，动画结束自动 `queue_free`。
 
-## 3. game-template —— 新项目模板
-
-结构：
-```
-addons/gd-common/   共享层（submodule）
-core/
-  game_data.gd      [autoload GameData]    你的数据+存档（调 SaveSystem）
-  game_manager.gd   [autoload GameManager] 你的流程（用 GxStateMachine）
-  data/             CSV/数据表
-scenes/             main.tscn + levels/ actors/ ui/ fx/
-assets/             美术/音频/字体
-```
-
-新项目怎么开：
-```
-git clone <game-template> my-game
-cd my-game
-git submodule update --init --recursive
-# Godot 打开 → 项目设置启用 gd-common → 运行
-```
-GameData / GameManager 是**桩**，按你的游戏改字段和状态即可；共享层不动。
-
----
-
-## 4. CyberCookV3 参考用法（想抄哪个模式就看哪个文件）
-
-| 模式 | 参考文件 |
+| API | 说明 |
 |---|---|
-| 流程/场景状态机 | `autoload/game_flow.gd`（GxStateMachine 包裹 change_scene） |
-| 数值条组件 | `scripts/gameplay/robot.gd`（耐心用 GxGaugeComponent） |
-| EventBus 桥接+订阅 | `autoload/state.gd`（桥接）+ `scripts/ui/global_hud.gd`（订阅） |
-| SaveSystem 用法 | `autoload/state.gd`（`save_game`/`load_game`） |
+| `spawn(pos, text, preset?, overrides?)` | 预设风格浮字。overrides 可选覆盖单个参数 |
+| `spawn_custom(pos, text, cfg: Dictionary)` | 完全自定义参数 |
+| `Preset.DEFAULT / DAMAGE / HEAL / CRITICAL / MUTED` | 5 种预设配色/字号/动画 |
+
+```gdscript
+# 挂在场景根节点或 HUD CanvasLayer 上
+var floating := GxFloatingNumber.new()
+add_child(floating)
+
+# —— 预设风格 ——
+func _on_enemy_hit(damage: int, pos: Vector2) -> void:
+    floating.spawn(pos, str(-damage), GxFloatingNumber.Preset.DAMAGE)
+
+func _on_heal(amount: int, pos: Vector2) -> void:
+    floating.spawn(pos, "+%d" % amount, GxFloatingNumber.Preset.HEAL)
+
+func _on_critical(pos: Vector2) -> void:
+    floating.spawn(pos, "CRIT!", GxFloatingNumber.Preset.CRITICAL)
+
+# —— 自定义 ——
+floating.spawn_custom(pos, "MISS", {
+    "color": Color.GRAY,
+    "duration": 0.6,
+    "font_size": 14,
+    "float_distance": 20.0,
+    "scale_start": 1.2,
+    "wobble": 4.0,
+})
+
+# —— 预设 + 覆盖个别参数 ——
+floating.spawn(pos, "+100", GxFloatingNumber.Preset.HEAL,
+    {"duration": 1.5, "float_distance": 60.0})
+```
 
 ---
 
-## 5. 接入 / 更新共享库
+## 3. 常见模式
+
+以下模式不依赖任何特定项目——你可以直接复制到自己的游戏里，改掉资源路径即可。
+
+### 3.1 场景流程控制（GxStateMachine + GameFlow）
+
+```gdscript
+# autoload: game_flow.gd
+const GxStateMachine := preload("res://addons/gd-common/fsm/state_machine.gd")
+const GxState := preload("res://addons/gd-common/fsm/state.gd")
+
+var _sm
+
+func _ready() -> void:
+    _sm = GxStateMachine.new(self)
+    _sm.add_state(&"title", GxState.new())
+    _sm.add_state(&"game",  GxState.new())
+    _sm.add_state(&"result", GxState.new())
+    _sm.state_changed.connect(func(_f, to):
+        var scene := {
+            &"title": "res://scenes/title.tscn",
+            &"game":  "res://scenes/game.tscn",
+            &"result":"res://scenes/result.tscn",
+        }
+        get_tree().change_scene_to_file.call_deferred(scene[to])
+    )
+    _sm.start(&"title")
+
+func go(phase: StringName) -> void:
+    _sm.transition_to(phase)
+```
+
+### 3.2 玩家状态 + 存档（SaveSystem）
+
+```gdscript
+# autoload: game_data.gd
+extends Node
+
+const SLOT := 0
+
+var level: int = 1
+var coins: int = 0
+var settings: Dictionary = {"music_vol": 1.0, "sfx_vol": 1.0}
+
+func save() -> void:
+    SaveSystem.save_to_slot(SLOT, {
+        "level": level, "coins": coins, "settings": settings,
+    })
+
+func load() -> void:
+    var data := SaveSystem.load_from_slot(SLOT)
+    if data.is_empty(): return
+    level    = data.get("level", 1)
+    coins    = data.get("coins", 0)
+    settings = data.get("settings", {})
+    EventBus.emit_event(&"game_loaded")
+
+func has_save() -> bool:
+    return SaveSystem.has_slot(SLOT)
+```
+
+### 3.3 音效注册表（SoundManager + AudioLib 模式）
+
+```gdscript
+# autoload: audio_lib.gd
+extends Node
+
+const SFX := {
+    click  = "res://sfx/ui_click.wav",
+    hit    = "res://sfx/hit.wav",
+}
+const BGM := {
+    menu   = "res://bgm/menu.wav",
+    battle = "res://bgm/battle.wav",
+}
+const AMBIENT := {
+    forest = "res://sfx/forest.wav",
+}
+
+var _cache: Dictionary = {}
+
+func _load(path: String) -> AudioStream:
+    if path.is_empty(): return null
+    if _cache.has(path): return _cache[path]
+    if ResourceLoader.exists(path):
+        _cache[path] = load(path)
+        return _cache[path]
+    return null
+
+func sfx(key: String) -> void:
+    SoundManager.play_sound(_load(SFX.get(key, "")))
+
+func bgm(key: String) -> void:
+    SoundManager.play_music(_load(BGM.get(key, "")), 1.5)
+
+func ambient(key: String) -> void:
+    SoundManager.play_ambient_sound(_load(AMBIENT.get(key, "")), 2.0)
+
+func stop_ambient(key: String) -> void:
+    var s := _load(AMBIENT.get(key, ""))
+    if s: SoundManager.stop_ambient_sound(s, 1.5)
+```
+
+### 3.4 耐心 / 血量条（GxGaugeComponent + ProgressBar）
+
+```gdscript
+# 挂到任意角色节点上
+@onready var bar: ProgressBar = $ProgressBar
+var gauge: GxGaugeComponent
+
+func _ready() -> void:
+    gauge = GxGaugeComponent.new()
+    gauge.max_value = 100.0
+    gauge.auto_rate = 0.0
+    add_child(gauge)
+    gauge.value_changed.connect(func(cur, mx):
+        bar.value = cur
+        bar.max_value = mx
+        bar.modulate = Color.RED if gauge.ratio() < 0.3 else Color.WHITE
+    )
+    gauge.depleted.connect(func(): die())
+
+func take_damage(amount: float) -> void:
+    gauge.drain(amount)
+
+func heal(amount: float) -> void:
+    gauge.fill(amount)
+```
+
+### 3.5 冷却图标 UI（GxCooldown + 材质参数）
+
+```gdscript
+var skill_cd := GxCooldown.new(3.0)
+
+func _process(delta: float) -> void:
+    skill_cd.tick(delta)
+    $SkillIcon.material.set_shader_parameter("cooldown", skill_cd.progress())
+    $SkillIcon.modulate = Color.GRAY if skill_cd.is_running() else Color.WHITE
+
+func use_skill() -> void:
+    if skill_cd.is_running(): return
+    _execute_skill()
+    skill_cd.start()
+
+func on_interrupted() -> void:
+    skill_cd.cancel()   # 打断不发 finished
+```
+
+---
+
+## 4. 接入 / 更新共享库
 
 接入到任意项目：
 ```
 git submodule add <gd-common-remote-url> addons/gd-common
-# 项目设置 → 插件 → 启用 gd-common
+# Godot 编辑器 → 项目设置 → 插件 → 启用 gd-common
 ```
+
 更新共享库到最新：
 ```
 git -C addons/gd-common pull origin main
@@ -280,177 +782,86 @@ git add addons/gd-common && git commit -m "bump gd-common"
 
 ---
 
-## 6. 解耦军规（任何要进共享层的代码都遵守）
+## 5. 解耦军规（共享层代码必须遵守）
 
-1. 禁写死节点路径 `get_node("/root/...")`。
-2. 禁在逻辑里写死 `res://` 资源路径——靠注入。
-3. 依赖注入，不在模块内部 `load()` 项目资源。
-4. 只发信号 / 走 EventBus，不硬引用别的系统。
-5. 自包含：模块自带脚本/场景/默认资源。
-6. 不依赖项目专属 autoload。
-
----
-
-## 7. 验证与纪律（踩过的坑）
-
-- **用 CLI 跑「运行」验证**：`godot --headless --path <项目> --quit`，可查脚本/解析错。
-- ⚠️ **别对 CyberCookV3 跑 `--import` / `--editor`**：会触发内置 CSV 翻译导入器把数据 CSV 回退（覆盖 csv-data 导入器）。GUI 编辑器正常用没问题。
-- **本地仓库 → 远程**：gd-common 本地仓库准备好后，`git remote add origin <url>` 并推上 GitHub，消费项目改 `.gitmodules` 的 url 为远程地址。
-- **headless 引用类**：用 `preload(".../xxx.gd")` 而非全局 `class_name`，避免依赖编辑器的全局类缓存。
+1. 禁写死节点路径 `get_node("/root/...")`
+2. 禁在逻辑里写死 `res://` 资源路径——靠注入
+3. 依赖注入，不在模块内部 `load()` 项目资源
+4. 只发信号 / 走 EventBus，不硬引用别的系统
+5. 自包含：模块自带脚本/场景/默认资源
+6. 不依赖项目专属 autoload
 
 ---
 
-## 8. 如何新增一个通用模块（贡献指南）
+## 6. 验证与纪律
 
-> 先问一句：**这功能跨游戏通用吗？** 通用 → 进 gd-common；带游戏专属假设 → 放项目 `modules/`，别污染共享层。
-> 提示「三次法则」：同一个东西在 2~3 个地方用过、形态稳定了再抽进来，别过早抽象。
+- **CLI 验证**：`godot --headless --path <项目> --quit`，查 0 解析错误
+- **headless 引用类**：用 `preload(".../xxx.gd")` 而非全局 `class_name`，避免依赖编辑器全局类缓存
+- **本地仓库 → 远程**：`git remote add origin <url>` 推上远程后，消费项目改 `.gitmodules` url
 
-### 8.1 文件夹职责表（**先看这个，防乱放**）
+---
 
-| 文件夹 | 放什么 | 用来做什么 | 什么时候用 | ❌ 不该放（反例） |
-|---|---|---|---|---|
-| `core/` | 全局服务单例（autoload 脚本，**不写 class_name**） | 提供「全局唯一、处处可访问」的跨模块服务 | 事件总线 / 存档 / 音频 / UI 管理 / 日志 等需要全局一份的 | 挂节点的组件→`components`；纯函数→`utils` |
-| `components/` | 继承 `Node` 的可复用组件 | 给任意游戏对象「拼装」一种能力/行为，随节点实例存在 | 功能是「某对象的一种能力」、有自己状态/信号、要进场景树（血量/耐心/移动/拾取/计时） | 全局单例→`core`；无状态计算→`utils`；状态机→`fsm` |
-| `fsm/` | 状态机基类/框架 | 管理状态切换（流程/关卡/AI） | 需要有限状态机、或扩展 FSM 能力时 | 非状态相关逻辑 |
-| `utils/` | 无状态工具类（多为静态函数） | 通用计算/小助手，不进场景树 | 纯逻辑：数学/随机/计时/对象池/字符串 | 要进场景树→`components`；全局服务→`core` |
-| 根 `plugin.gd` / `plugin.cfg` | 插件入口 | 启用时注册 autoload | **仅当新增/删除 autoload 时**才改 | 业务逻辑 |
+## 7. 如何新增一个通用模块（贡献指南）
 
-> 新增大类（如可复用 Control 控件）可建新子文件夹（如 `ui_base/`），但**必须在本表登记 + 在 `README.md` 加契约条目**，保持本表是唯一权威映射。
+> 先问：**这功能跨游戏通用吗？** 通用 → 进 gd-common；带游戏专属假设 → 放项目里。
+> 「三次法则」：同一个东西在 2~3 个地方用过、形态稳定了再抽进来。
 
-### 8.2 选放哪的决策流（一句话判定）
+### 7.1 文件夹职责表
+
+| 文件夹 | 放什么 | ❌ 不该放 |
+|---|---|---|
+| `core/` | autoload 脚本（**不写 class_name**） | 挂节点的组件 |
+| `components/` | 继承 Node/Control 的可复用组件 | 全局单例 |
+| `fsm/` | 状态机基类/框架 | 非状态相关逻辑 |
+| `utils/` | 无状态工具类（纯函数/RefCounted） | 要进场景树的 |
+| 根 `plugin.gd` / `plugin.cfg` | 插件入口 | 业务逻辑 |
+
+### 7.2 决策流
 
 ```
-全局唯一、到处可调？ ───────────────── 是 → core/  (autoload)
-挂在节点上、随实例存在、给对象加能力？ ── 是 → components/
-是状态机？ ─────────────────────────── 是 → fsm/
-纯函数 / 不进场景树的工具？ ─────────── 是 → utils/
-都不是 / 带游戏专属假设？ ───────────── 不进 gd-common，放项目 modules/
+全局唯一、到处可调？ ── 是 → core/ (autoload)
+挂在节点上、给对象加能力？ ── 是 → components/
+是状态机？ ── 是 → fsm/
+纯函数 / 不进场景树？ ── 是 → utils/
+都不是？ ── 不进 gd-common，放项目
 ```
 
-### 8.3 命名 / 类型规范
+### 7.3 命名规范
 
-- 普通类/组件：`class_name GxXxx`（**Gx 前缀**）。
-- autoload 脚本：用简洁全局名（如 `Logger`），脚本里**不要写 class_name**（会与 autoload 全局名冲突）。
-- 信号、文件名：`snake_case`（如 `value_changed`、`gx_timer.gd`）。
-- 头部引用其它 Gx 类优先 `preload(...)`，headless/CI 更稳。
+- 普通类/组件：`class_name GxXxx`（Gx 前缀）
+- autoload 脚本：简洁全局名，脚本内**不要写 class_name**
+- 信号、文件名：`snake_case`
+- 引用 Gx 类优先 `preload(...)`，headless/CI 更稳
 
-### 8.4 两种添加流程 + 手把手示例
+### 7.4 添加新模块流程
 
-#### A. 普通类 / 组件（不需要全局单例）——**最常见，不用改 plugin.gd**
+#### A. 普通类/组件——最常见，不用改 plugin.gd
 
-1) 新建 `components/gx_timer.gd`：
-```gdscript
-class_name GxTimer
-extends Node
-## 可复用倒计时组件。挂在任意节点上。
+新建 `components/gx_timer.gd`，然后在 `README.md` 登记一条。调用方：
 
-signal timeout
-
-@export var duration: float = 1.0
-@export var autostart: bool = false
-
-var _left: float = 0.0
-var _running: bool = false
-
-
-func _ready() -> void:
-	if autostart:
-		start()
-
-
-func start(d: float = -1.0) -> void:
-	if d > 0.0:
-		duration = d
-	_left = duration
-	_running = true
-
-
-func stop() -> void:
-	_running = false
-
-
-func _process(delta: float) -> void:
-	if not _running:
-		return
-	_left -= delta
-	if _left <= 0.0:
-		_running = false
-		timeout.emit()
-```
-
-2) 在 `README.md` 文件夹表/契约里登记一条。
-
-3) 调用（任意项目，pull 到最新后）：
 ```gdscript
 const GxTimer := preload("res://addons/gd-common/components/gx_timer.gd")
-
 var t := GxTimer.new()
 add_child(t)
 t.timeout.connect(func(): print("时间到"))
 t.start(3.0)
 ```
-> 编辑器里全局类缓存生效后，也可直接 `GxTimer.new()`。
 
-#### B. 新 autoload 服务（需要全局单例）——**多两步注册**
+#### B. 新 autoload 服务——多两步注册
 
-1) 新建 `core/logger.gd`（**不写 class_name**）：
-```gdscript
-extends Node
-## 全局日志服务（autoload: Logger）。
+1. 新建 `core/logger.gd`（**不写 class_name**）
+2. 在 `plugin.gd` 的 `AUTOLOADS` 里注册
+3. 在消费项目启用插件（自动写入 `project.godot`）
 
-enum Level { DEBUG, INFO, WARN, ERROR }
+### 7.5 发布链路
 
-var min_level: int = Level.DEBUG
+```
+# 源仓库
+git add -A && git commit -m "feat: GxTimer"
+git push origin main
 
-
-func info(msg: String) -> void:
-	_log(Level.INFO, msg)
-
-
-func warn(msg: String) -> void:
-	_log(Level.WARN, msg)
-
-
-func error(msg: String) -> void:
-	_log(Level.ERROR, msg)
-
-
-func _log(level: int, msg: String) -> void:
-	if level < min_level:
-		return
-	print("[%s] %s" % [Level.keys()[level], msg])
+# 消费项目
+git -C addons/gd-common pull origin main
 ```
 
-2) 在 `plugin.gd` 的 `AUTOLOADS` 里加一条：
-```gdscript
-const AUTOLOADS := {
-	"EventBus": "res://addons/gd-common/core/event_bus.gd",
-	# ... 既有的 ...
-	"Logger": "res://addons/gd-common/core/logger.gd",   # 新增
-}
-```
-
-3) 在消费项目 `project.godot` 的 `[autoload]` 注册（或在编辑器里禁用再启用插件，让它自动写入）：
-```
-Logger="*res://addons/gd-common/core/logger.gd"
-```
-
-4) 调用（全局，任何地方）：
-```gdscript
-Logger.info("开张了")
-Logger.error("出错了")
-```
-
-### 8.5 每个模块必交付 / 发布 / 验证
-
-- **必交付**：① 遵守 §6 军规；② 在 `README.md` 加契约条目（API + 一段最小用法）；③ §8.1 表里能对上号的归属。
-- **发布链路**：
-  ```
-  # 在源仓库 gd-common
-  git add -A && git commit -m "feat: GxTimer"
-  git push origin main
-  # 在每个消费项目
-  git -C addons/gd-common pull origin main
-  ```
-- **验证**：`godot --headless --path <项目> --quit`，确认 0 SCRIPT/Parse ERROR。
-
+验证：`godot --headless --path <项目> --quit`，确认 0 ERROR。
