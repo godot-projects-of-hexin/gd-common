@@ -11,7 +11,7 @@ Reusable **generic layer** for Godot 4 projects, shipped as an addon and consume
 ## Install
 
 ```
-git submodule add file:///D:/GitRepos/gd-common addons/gd-common
+git submodule add <gd-common-repo-url> addons/gd-common
 ```
 
 Enable **gd-common** in Project Settings → Plugins. The plugin registers its
@@ -35,17 +35,28 @@ autoload singletons (`EventBus`, `SaveSystem`, `SoundManager`, `UIManager`).
 
 ## Modules & contracts
 
-### Services (autoloads)
-
 ### `core/event_bus.gd` — autoload `EventBus`
-Global decoupled publish/subscribe. Subscriber callables take **one** arg (payload).
+Global decoupled publish/subscribe. Subscribers must accept exactly one argument
+(the payload). Type-safe internally (`Array[Callable]`, not untyped `Array`).
+
+**Why**: Decouple modules that should not hold references to each other.
+A score system can emit `&"enemy_killed"` without knowing what UI/audio/achievement
+systems are listening.
+
 ```gdscript
-EventBus.subscribe(&"tokens_changed", _on_tokens)   # consumer
-EventBus.emit_event(&"tokens_changed", 120)         # producer
-EventBus.unsubscribe(&"tokens_changed", _on_tokens)
+# Producer — any module, no import needed:
+EventBus.emit_event(&"tokens_changed", 120)
+
+# Consumer — subscribe in _ready, unsubscribe if it leaves the tree:
+func _ready() -> void:
+    EventBus.subscribe(&"tokens_changed", _on_tokens)
+
+func _on_tokens(v: int) -> void:
+    $Label.text = str(v)
 ```
-- `subscribe/unsubscribe/emit_event/has_subscribers/clear_event/clear_all`
+- `subscribe / unsubscribe / emit_event / has_subscribers / clear_event / clear_all`
 - Freed listeners are auto-pruned on emit.
+- Subscriber callables take exactly **one** arg (payload).
 
 ### `core/save_system.gd` — autoload `SaveSystem`
 Persistence mechanism (knows *how*, not *what*). Project builds a flat Dictionary.
@@ -57,30 +68,66 @@ SaveSystem.set_version(2); SaveSystem.set_migrator(my_migrate_callable)
 ```
 Stores `user://saves/slot_N.cfg` with a `__version` for migration.
 
-### `audio/sound_manager.gd` — autoload `SoundManager` [absorbed from nathanhoad/godot_sound_manager v2.6.2 MIT]
-Split into 4 player pools: sounds (×8), UI sounds (×8, plays when paused), ambient (×1, fade in/out), music (×2, crossfade). Auto-detects audio buses by name.
+### `audio/sound_manager.gd` — autoload `SoundManager`
+Generic playback; audio **assets stay in the project** — pass `AudioStream` objects in.
+
+**Why process-mode split matters**: When `get_tree().paused = true` (e.g.
+opening a pause menu), SFX should silence but BGM fade should keep ticking,
+otherwise the fade-out animation freezes mid-way.
+
+- SFX/Ambient roots: `PROCESS_MODE_INHERIT` — pause with the tree.
+- Music root: `PROCESS_MODE_ALWAYS` — tween keeps running; use `pause_music()` to silence.
+
+**Practical usage** (see `audio_lib.gd` for the full pattern):
 ```gdscript
-SoundManager.play_sound(stream)
-SoundManager.play_ui_sound(stream)            # plays even when paused
-SoundManager.play_ambient_sound(stream, 2.0)  # fade in
-SoundManager.play_music(stream, 1.5)          # crossfade
-SoundManager.stop_music(2.0)                  # fade out
-SoundManager.set_music_volume(0.8)            # 0–1 linear
+# Load once, cache, call anywhere:
+var stream := load("res://sfx/ui_click.wav")
+SoundManager.play_sound(stream)               # one-shot SFX, 8-slot pool
+SoundManager.play_ui_sound(stream)            # alias — same pool
+
+SoundManager.play_music(load("res://bgm/service.wav"), 1.5)  # crossfade in
+SoundManager.stop_music(1.5)                                  # fade out
+
+SoundManager.play_ambient_sound(load("res://sfx/kitchen.wav"), 2.0)  # looping
+SoundManager.stop_all_ambient_sounds(1.5)      # scene transition cleanup
+
+# PR-0002: pause/resume without stopping the playhead
+SoundManager.pause_music(0.5)                 # fade to silence
+SoundManager.resume_music(0.5)                # fade back to last volume
+SoundManager.is_music_paused() -> bool
 ```
+
+**Known behaviors / contracts:**
+- `play_sound()` / `play_ui_sound()` share 8 concurrent SFX slots. When all are busy, the **oldest** (index 0) is preempted — fine for short UI feedback clips. Long ambiences should use `play_ambient_sound()` which gets a dedicated player.
+- `play_music()` clears the API-pause flag. After `pause_music()` → `play_music(new_track)`, `is_music_paused()` returns `false` and `resume_music()` would restore `new_track`'s default volume (not the old track's).
+- `pause_music()` / `resume_music()` are idempotent: a second `pause_music()` while paused is a no-op.
 
 ### `core/ui_manager.gd` — autoload `UIManager`
 Generic **Control** panel stack on its own CanvasLayer (for transient modals).
-```gdscript
-var p := UIManager.push_panel(packed_scene)   # root must be a Control
-UIManager.pop_panel(); UIManager.get_top(); UIManager.clear()
-```
-> Not for persistent HUDs or Node2D panels.
 
-### State machine framework
+**Why**: Manual `add_child` for modals requires remembering what's underneath
+and restoring visibility. UIManager pushes/pops panels, hiding the one beneath
+automatically, so you can nest dialogs (e.g. settings → keybind) without
+tracking state yourself.
+
+```gdscript
+# Push a modal dialog:
+var panel := UIManager.push_panel(preload("res://ui/confirm_dialog.tscn"))
+# ... user interacts, clicks "OK" ...
+
+# Pop and auto-free the top panel, show the one underneath:
+UIManager.pop_panel()
+# UIManager.get_top() returns the previous panel (or null)
+# UIManager.clear() frees the entire stack (e.g. scene change)
+```
+> Only for **Control**-based modals. Not for persistent HUDs, Node2D overlays,
+> or in-world UI. (CyberCookV3 uses Node2D panels and skips this module.)
 
 ### `fsm/state_machine.gd` + `fsm/state.gd` — `GxStateMachine` / `GxState`
 Minimal FSM for scene/level/flow control (and actor AI). Subclass `GxState` or use
 plain states + the `state_changed` signal.
+
+**Basic flow:**
 ```gdscript
 var sm := GxStateMachine.new(self)             # self = context
 sm.add_state(&"prep", GxState.new())
@@ -89,7 +136,39 @@ sm.state_changed.connect(func(from, to): ...)  # react to transitions
 sm.transition_to(&"prep")
 ```
 
-### Components (node-based)
+**Event-driven with guards** (PR-0001):
+```gdscript
+var sm := GxStateMachine.new()
+sm.attach_to(self)                              # records host (read-only on .attached_host)
+sm.add_state(&"idle", GxState.new())
+sm.add_state(&"walk", GxState.new())
+sm.add_state(&"attack", GxState.new())
+
+# (from_state, event) -> (target, optional guard)
+sm.add_transition(&"idle",   &"move_pressed",  &"walk")
+sm.add_transition(&"walk",   &"attack_pressed", &"attack",
+    func() -> bool: return $Weapon.can_attack())    # guard
+
+sm.start(&"idle")
+sm.try_transition(&"move_pressed")                # walks
+sm.try_transition(&"attack_pressed")              # attack only if guard passes
+```
+
+**Queries & signals** (PR-0001):
+```gdscript
+sm.is_in_state(&"walk")                           # strict name match
+sm.guard_failed.connect(func(from, ev): ...)      # guard returned false
+sm.unhandled_event.connect(func(ev): ...)         # no transition matched
+```
+
+`is_in_state` is exact-match only and returns `false` until `start()` has been
+called. Hierarchical (HSM) support is intentionally out of scope and would be
+a separate PR.
+
+**Error policy:** `add_transition()` reports unknown state names via
+`push_error()` (not `assert`), so release builds behave like debug builds.
+`transition_to()` warns via `push_warning` on a self-transition (current == target)
+and is a no-op — self-transitions are almost always a logic bug.
 
 ### `components/gauge_component.gd` — `GxGaugeComponent` (Node)
 Bounded value `[0, max]` with optional time-based drain/refill.
@@ -102,54 +181,75 @@ g.value_changed.connect(...); g.depleted.connect(...)
 g.reset(); g.drain(5); g.fill(2); g.auto_active = true
 ```
 
-### `components/gx_floating_number.gd` — `GxFloatingNumber` (CanvasLayer)
-Floating number display with pop→float→wobble→fade animation. Each call creates
-a self-destructing Label. Use for damage numbers, score popups, crits, misses, etc.
+### `utils/gx_cooldown.gd` — `GxCooldown` (RefCounted)
+Manual cooldown timer. Drive it yourself via `update(delta)` — no `_process` dependency.
+
+**Why**: Many mechanics need timed gates (attack cooldown, dash recharge,
+ability cooldown) that are event-driven, not frame-driven.
 
 ```gdscript
-var fn := GxFloatingNumber.new(); fn.layer = 100; add_child(fn)
-fn.spawn(pos, "+80", GxFloatingNumber.Preset.HEAL)
-fn.spawn(pos, "999", GxFloatingNumber.Preset.CRITICAL, {font_size = 36})
-fn.spawn_custom(pos, "???", {color = Color.VIOLET, scale_start = 3.0})
+var _dash_cooldown := GxCooldown.new(2.0)   # 2-second dash cooldown
+
+func _process(delta: float) -> void:
+    _dash_cooldown.update(delta)
+
+func _on_dash_input() -> void:
+    if not _dash_cooldown.is_ready():
+        return
+    _perform_dash()
+    _dash_cooldown.start()
+
+# Interrupt without firing (player died mid-charge):
+func _on_player_died() -> void:
+    _dash_cooldown.cancel()    # resets to 0, no "finished" signal
 ```
+- Methods: `start(duration?), update(delta), is_ready(), progress(), cancel()`
+- Signal: `finished` — fires once when time reaches 0; won't re-fire until `start()` is called again.
 
-**Presets:** `DEFAULT` (white) `DAMAGE` (red) `HEAL` (green) `CRITICAL` (gold, bigger)
-`MUTED` (gray, smaller). Each preset controls default color / scale / font_size /
-float_distance / wobble.
+### `utils/gx_math.gd` — `GxMath` (static)
+Stateless math helpers, no instantiation needed.
 
-**Override keys** (pass as 4th arg to `spawn()` or full dict to `spawn_custom()`):
-
-| key | type | default (preset) | description |
-|-----|------|------------------|-------------|
-| `color` | Color | preset | text color |
-| `font_size` | int | preset | font size in px |
-| `scale_start` | float | preset | initial pop scale (e.g. 2.5 → 1.0) |
-| `float_distance` | float | preset | pixels to drift upward |
-| `wobble` | float | preset | max horizontal random drift |
-| `duration` | float | 0.8 | total animation time (seconds) |
-
-### Utilities
-
-#### `GxMath` (static)
 ```gdscript
-var v := GxMath.approach(5.0, 10.0, delta * 3.0)          # toward 10, +3/frame
-var r := GxMath.remap_clamped(0.5, 0.0, 1.0, 0.0, 100.0)   # → 50.0
-if GxMath.chance(0.2): print("20% hit")
-var pick = GxMath.pick_random(["a", "b", "c"])
+GxMath.approach(5.0, 10.0, 2.0)         # → 7.0  (moves toward target by delta)
+GxMath.remap_clamped(0.5, 0, 1, 0, 100) # → 50.0 (remaps a value to new range)
+GxMath.chance(0.3)                       # → true 30% of the time
+GxMath.pick_random([1, 2, 3])            # → one random element
 ```
+- `approach(current, target, delta)` — smooth movement toward target, no overshoot.
+- `remap_clamped(value, in_min, in_max, out_min, out_max)` — linear remap, clamped.
+- `chance(probability)` — returns `true` with the given probability (0.0–1.0).
+- `pick_random(arr)` — random element from non-empty array, `null` if empty.
 
-#### `GxCooldown` (manual timer)
+### `utils/gx_object_pool.gd` — `GxObjectPool` (RefCounted)
+Reuse objects instead of creating/destroying them every frame (bullets, particles, popup text).
+
 ```gdscript
-var cd := GxCooldown.new(2.0)
-cd.start(); cd.update(delta)
-if cd.is_ready(): print("ready")   # or connect cd.finished
-print(cd.progress())               # 0.0~1.0
+# Factory: a callable that creates a fresh instance
+var _bullet_pool := GxObjectPool.new(func() -> Node:
+    return preload("res://bullet.tscn").instantiate(), 5)  # prewarm 5
+
+func _fire_bullet() -> void:
+    var b := _bullet_pool.acquire()        # take from pool (or create new)
+    b.position = $Muzzle.global_position
+    get_tree().current_scene.add_child(b)
+
+func _on_bullet_impact(bullet: Node) -> void:
+    _bullet_pool.release(bullet)           # return to pool for reuse
 ```
+- `acquire()` — get an instance (pooled or new).
+- `release(obj)` — return to pool. Does **not** dedupe: releasing the same object twice duplicates it. Use with care.
+- `available_count()` — how many are currently in the pool.
 
-#### `GxObjectPool` (factory-based)
+### `components/gx_floating_number.gd` — `GxFloatingNumber` (Control)
+Floating damage/score numbers that drift upward and fade out.
+
 ```gdscript
-var pool := GxObjectPool.new(func(): return Bullet.new(), 10)  # prewarm 10
-var b = pool.acquire(); pool.release(b)
+var fn := GxFloatingNumber.new()
+fn.text = "-5"
+fn.color = Color.RED
+fn.duration = 1.2
+add_child(fn)
+fn.show_at(global_position)    # animates upward, auto-frees on finish
 ```
 
 ---
