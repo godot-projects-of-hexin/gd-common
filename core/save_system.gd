@@ -3,6 +3,9 @@ extends Node
 ## Persists arbitrary Dictionaries to user:// slots. Knows nothing about game data.
 ## The consuming project's GameData builds the Dictionary and calls save/load.
 
+signal saved(slot: int)
+signal loaded(slot: int)
+
 const SAVE_DIR := "user://saves/"
 const SAVE_EXT := ".cfg"
 const VERSION_KEY := "__version"
@@ -37,7 +40,10 @@ func save_to_slot(slot: int, data: Dictionary) -> bool:
 	cfg.set_value(DATA_SECTION, VERSION_KEY, _version)
 	for key in data:
 		cfg.set_value(DATA_SECTION, key, data[key])
-	return cfg.save(_slot_path(slot)) == OK
+	var ok := cfg.save(_slot_path(slot)) == OK
+	if ok:
+		saved.emit(slot)
+	return ok
 
 
 ## Load a slot's data. Returns {} if missing/invalid. Runs the migrator if versions differ.
@@ -67,6 +73,7 @@ func load_from_slot(slot: int) -> Dictionary:
 	data.erase(VERSION_KEY)
 	if from_version != _version and _migrator.is_valid():
 		data = _migrator.call(data, from_version, _version)
+	loaded.emit(slot)
 	return data
 
 

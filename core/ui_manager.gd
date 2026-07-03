@@ -3,6 +3,12 @@ extends Node
 ## Manages a stack of Control panels on a dedicated CanvasLayer.
 ## Knows nothing about specific panels; instance them and push.
 
+signal panel_pushed(panel: Control)
+## Emitted before the top panel is popped. Listeners can inspect or prevent
+## neither — this is purely a notification so the panel can save state.
+signal panel_will_pop(panel: Control)
+signal panel_popped
+
 const BASE_LAYER := 100
 
 var _layer: CanvasLayer
@@ -33,6 +39,7 @@ func push_panel_node(panel: Control) -> Control:
 		_stack.back().visible = false
 	_layer.add_child(panel)
 	_stack.append(panel)
+	panel_pushed.emit(panel)
 	return panel
 
 
@@ -40,11 +47,14 @@ func push_panel_node(panel: Control) -> Control:
 func pop_panel() -> void:
 	if _stack.is_empty():
 		return
-	var top: Control = _stack.pop_back()
+	var top: Control = _stack.back()
+	panel_will_pop.emit(top)
+	_stack.pop_back()
 	if is_instance_valid(top):
 		top.queue_free()
 	if _stack.size() > 0:
 		_stack.back().visible = true
+	panel_popped.emit()
 
 
 func get_top() -> Control:
@@ -56,8 +66,10 @@ func get_top() -> Control:
 func clear() -> void:
 	for panel in _stack:
 		if is_instance_valid(panel):
+			panel_will_pop.emit(panel)
 			panel.queue_free()
 	_stack.clear()
+	panel_popped.emit()
 
 
 func stack_size() -> int:

@@ -9,7 +9,11 @@ signal value_changed(current: float, maximum: float)
 signal depleted   ## current reached 0
 signal filled     ## current reached max_value
 
-@export var max_value: float = 100.0
+@export var max_value: float = 100.0:
+	set(v):
+		max_value = maxf(v, 0.0)
+		current = minf(current, max_value)
+		value_changed.emit(current, max_value)
 @export var start_full: bool = true
 ## Units per second. Positive = drain toward 0, negative = refill toward max. 0 = manual only.
 @export var auto_rate: float = 0.0

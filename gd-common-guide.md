@@ -56,6 +56,9 @@ SaveSystem.save_to_slot(0, {"level": 3, "tokens": 120})   # 你组好 dict
 var data := SaveSystem.load_from_slot(0)                    # 没有则返回 {}
 SaveSystem.has_slot(0); SaveSystem.delete_slot(0); SaveSystem.list_slots()
 SaveSystem.set_version(2); SaveSystem.set_migrator(回调)    # 版本迁移
+# 可观测信号：
+SaveSystem.saved.connect(func(slot): ...)                   # 存档确认
+SaveSystem.loaded.connect(func(slot): ...)                  # 读档成功
 ```
 - 存到 `user://saves/slot_N.cfg`，带 `__version`。
 - 「存什么」由项目的 GameData 决定；SaveSystem 只负责落盘/读盘。
@@ -82,6 +85,7 @@ SoundManager.resume_music(0.5)              # 淡回上次音量
 - `pause_music()` 才是正确选择 —— `set_bus_volume_db("Music", -60)` 在 pause 时 bus 不 tick，tween 失效。
 - SFX 池 8 通道：全忙时**抢占最旧**通道（短 UI 反馈设计；长 ambience 用 `play_ambient_sound`）。
 - `play_music(新歌)` 清掉 pause 内部状态，防止 `resume_music` 误恢复旧歌音量。
+- 环境音按流文件的 `resource_path` 作 key（生成式流用 `instance_id`）。同一文件 `load()` 两次指向同一个 ambient 槽位——重复播放会先停旧再播新。
 
 ### 2.4 UIManager —— 模态面板栈
 **为什么**：手动 `add_child` 弹出对话框时要记住"底下是谁"、恢复谁的 `visible`——面板二层三层嵌套时极其脆弱。UIManager 自动 hide 下层、show 上层，你只需 push/pop。
@@ -94,6 +98,11 @@ UIManager.push_panel(preload("res://ui/keybind.tscn"))
 UIManager.pop_panel()
 UIManager.get_top()    # 取最上层面板（或 null）
 UIManager.clear()      # 场景切换时全清
+
+# 可观测信号：
+UIManager.panel_pushed.connect(func(p): ...)     # 面板被推入
+UIManager.panel_will_pop.connect(func(p): ...)   # 即将弹出（在此存状态）
+UIManager.panel_popped.connect(func(): ...)      # 弹出完成
 ```
 > ⚠️ 仅用于 **Control 瞬态弹窗**。不适合常驻 HUD 或 Node2D 面板（CyberCookV3 的弹窗是 Node2D、HUD 是常驻 autoload，所以 V3 没用它——它留给新项目的 Control 式 UI）。
 
@@ -153,13 +162,14 @@ g.depleted.connect(_on_empty)          # 归零
 g.reset(); g.drain(5); g.fill(2); g.auto_active = true
 ```
 - 用于：机器人耐心、血量、体力、读条/充能。`rate_scale` 可做急单×1.5 等加速。
+- 运行时修改 `max_value` 会自动 clamp `current` 到新上界并发射 `value_changed`。
 
 ### 2.7 GxCooldown —— 冷却计时器
 ```gdscript
 var _dash_cd := GxCooldown.new(2.0)           # 2 秒冷却
 
 func _process(delta: float) -> void:
-    _dash_cd.update(delta)                    # 手动推进
+    _dash_cd.tick(delta)                      # 手动推进
 
 func _on_dash_input() -> void:
     if not _dash_cd.is_ready(): return        # 冷却中
@@ -169,8 +179,10 @@ func _on_dash_input() -> void:
 func _on_player_died() -> void:
     _dash_cd.cancel()                         # 中断 — 不发 finished 信号
 ```
-- `start(秒?) / update(delta) / is_ready() / progress() / cancel()`
+- `start(秒?) / tick(delta) / is_ready() / is_running() / progress() / cancel()`
+- `is_running()` 当 `time_left > 0` 返回 `true`（区分"活跃冷却中"和"已归零"）。
 - 信号 `finished` — 归零时发一次。`cancel()` 不发。
+- 兼容：`.update(delta)` 仍可用（委托给 `.tick()`）。
 - 用于：技能冷却、冲刺间隔、攻击间隔。
 
 ### 2.8 GxMath —— 数学工具（纯静态）
@@ -187,18 +199,22 @@ GxMath.pick_random([1, 2, 3])            # 随机一个
 
 ### 2.9 GxObjectPool —— 对象池
 ```gdscript
+# 工厂回调 + 可选重置回调（归池前清脏状态）
 var _pool := GxObjectPool.new(func():
-    return preload("res://bullet.tscn").instantiate(), 5)  # 预热 5 个
+    return preload("res://bullet.tscn").instantiate(),
+    5,                                # 预热 5 个
+    func(obj): obj.visible = false)   # 重置
 
 func _fire() -> void:
     var b := _pool.acquire()        # 从池取（不够才 new）
+    b.visible = true
     add_child(b)
 
 func _on_impact(bullet) -> void:
     _pool.release(bullet)           # 归还复用
 ```
 - `acquire()` — 获取实例。`release(obj)` — 归还。`available_count()` — 池中数量。
-- ⚠️ `release` 不防重：同一对象 release 两次会重复入池。
+- 重复 release 同一对象会被检测并忽略（带 warning）。`on_release` 回调在入池前调用。
 
 ### 2.10 GxFloatingNumber —— 浮字
 ```gdscript

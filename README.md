@@ -65,6 +65,9 @@ SaveSystem.save_to_slot(0, {"level": 3, "tokens": 120})
 var data := SaveSystem.load_from_slot(0)            # {} if missing
 SaveSystem.has_slot(0); SaveSystem.delete_slot(0); SaveSystem.list_slots()
 SaveSystem.set_version(2); SaveSystem.set_migrator(my_migrate_callable)
+# Observability signals:
+SaveSystem.saved.connect(func(slot): ...)            # save confirmed
+SaveSystem.loaded.connect(func(slot): ...)           # load succeeded
 ```
 Stores `user://saves/slot_N.cfg` with a `__version` for migration.
 
@@ -101,6 +104,7 @@ SoundManager.is_music_paused() -> bool
 - `play_sound()` / `play_ui_sound()` share 8 concurrent SFX slots. When all are busy, the **oldest** (index 0) is preempted — fine for short UI feedback clips. Long ambiences should use `play_ambient_sound()` which gets a dedicated player.
 - `play_music()` clears the API-pause flag. After `pause_music()` → `play_music(new_track)`, `is_music_paused()` returns `false` and `resume_music()` would restore `new_track`'s default volume (not the old track's).
 - `pause_music()` / `resume_music()` are idempotent: a second `pause_music()` while paused is a no-op.
+- Ambient sounds are keyed by the stream's `resource_path` (or `get_instance_id()` for generated streams). Two calls to `load()` the same file share the same ambient slot — calling `play_ambient_sound()` again for an already-playing ambient with the same resource path will stop and restart it.
 
 ### `core/ui_manager.gd` — autoload `UIManager`
 Generic **Control** panel stack on its own CanvasLayer (for transient modals).
@@ -119,6 +123,11 @@ var panel := UIManager.push_panel(preload("res://ui/confirm_dialog.tscn"))
 UIManager.pop_panel()
 # UIManager.get_top() returns the previous panel (or null)
 # UIManager.clear() frees the entire stack (e.g. scene change)
+
+# Observability signals:
+UIManager.panel_pushed.connect(func(p): ...)     # a panel was pushed
+UIManager.panel_will_pop.connect(func(p): ...)   # about to pop (save state here)
+UIManager.panel_popped.connect(func(): ...)      # pop completed
 ```
 > Only for **Control**-based modals. Not for persistent HUDs, Node2D overlays,
 > or in-world UI. (CyberCookV3 uses Node2D panels and skips this module.)
@@ -180,9 +189,10 @@ add_child(g)
 g.value_changed.connect(...); g.depleted.connect(...)
 g.reset(); g.drain(5); g.fill(2); g.auto_active = true
 ```
+- Changing `max_value` at runtime auto-clamps `current` to the new bound and emits `value_changed`.
 
 ### `utils/gx_cooldown.gd` — `GxCooldown` (RefCounted)
-Manual cooldown timer. Drive it yourself via `update(delta)` — no `_process` dependency.
+Manual cooldown timer. Drive it yourself via `tick(delta)` — no `_process` dependency.
 
 **Why**: Many mechanics need timed gates (attack cooldown, dash recharge,
 ability cooldown) that are event-driven, not frame-driven.
@@ -191,7 +201,7 @@ ability cooldown) that are event-driven, not frame-driven.
 var _dash_cooldown := GxCooldown.new(2.0)   # 2-second dash cooldown
 
 func _process(delta: float) -> void:
-    _dash_cooldown.update(delta)
+    _dash_cooldown.tick(delta)
 
 func _on_dash_input() -> void:
     if not _dash_cooldown.is_ready():
@@ -203,8 +213,10 @@ func _on_dash_input() -> void:
 func _on_player_died() -> void:
     _dash_cooldown.cancel()    # resets to 0, no "finished" signal
 ```
-- Methods: `start(duration?), update(delta), is_ready(), progress(), cancel()`
+- Methods: `start(duration?), tick(delta), is_ready(), is_running(), progress(), cancel()`
+- `is_running()` returns `true` while time_left > 0 (the cooldown is active).
 - Signal: `finished` — fires once when time reaches 0; won't re-fire until `start()` is called again.
+- Legacy: `.update(delta)` still works (delegates to `.tick()`) for backward compatibility.
 
 ### `utils/gx_math.gd` — `GxMath` (static)
 Stateless math helpers, no instantiation needed.
@@ -225,19 +237,23 @@ Reuse objects instead of creating/destroying them every frame (bullets, particle
 
 ```gdscript
 # Factory: a callable that creates a fresh instance
+# Optional on_release: a callable that resets an object before pooling
 var _bullet_pool := GxObjectPool.new(func() -> Node:
-    return preload("res://bullet.tscn").instantiate(), 5)  # prewarm 5
+    return preload("res://bullet.tscn").instantiate(),
+    5,   # prewarm 5
+    func(obj): obj.visible = false)   # reset on return
 
 func _fire_bullet() -> void:
     var b := _bullet_pool.acquire()        # take from pool (or create new)
     b.position = $Muzzle.global_position
+    b.visible = true
     get_tree().current_scene.add_child(b)
 
 func _on_bullet_impact(bullet: Node) -> void:
     _bullet_pool.release(bullet)           # return to pool for reuse
 ```
 - `acquire()` — get an instance (pooled or new).
-- `release(obj)` — return to pool. Does **not** dedupe: releasing the same object twice duplicates it. Use with care.
+- `release(obj)` — return to pool. Calls `on_release` callback (if set) to reset state. Duplicate releases of the same object are detected and ignored with a warning.
 - `available_count()` — how many are currently in the pool.
 
 ### `components/gx_floating_number.gd` — `GxFloatingNumber` (Control)

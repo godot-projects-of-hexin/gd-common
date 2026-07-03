@@ -1,227 +1,223 @@
 extends Node
-
-
-const SoundEffectsPlayer = preload("./sound_effects.gd")
-const AmbientSoundsPlayer = preload("./ambient_sounds.gd")
-const MusicPlayer = preload("./music.gd")
-
-var sound_effects: SoundEffectsPlayer = SoundEffectsPlayer.new(["Sounds", "SFX"], 8)
-var ui_sound_effects: SoundEffectsPlayer = SoundEffectsPlayer.new(["UI", "Interface", "Sounds", "SFX"], 8)
-var ambient_sounds: AmbientSoundsPlayer = AmbientSoundsPlayer.new(["Sounds", "SFX"], 1)
-var music: MusicPlayer = MusicPlayer.new(["Music"], 2)
-
-var sound_process_mode: ProcessMode:
-	set(value):
-		sound_effects.process_mode = value
-	get:
-		return sound_effects.process_mode
-
-var ui_sound_process_mode: ProcessMode:
-	set(value):
-		ui_sound_effects.process_mode = value
-	get:
-		return ui_sound_effects.process_mode
-
-
-var ambient_sound_process_mode: ProcessMode:
-	set(value):
-		ambient_sounds.process_mode = value
-	get:
-		return ambient_sounds.process_mode
-
-
-var music_process_mode: ProcessMode:
-	set(value):
-		music.process_mode = value
-	get:
-		return music.process_mode
-
-
-func _init() -> void:
-	Engine.register_singleton("SoundManager", self)
-
-	add_child(sound_effects)
-	add_child(ui_sound_effects)
-	add_child(ambient_sounds)
-	add_child(music)
-
-	sound_process_mode = PROCESS_MODE_PAUSABLE
-	ui_sound_process_mode = PROCESS_MODE_ALWAYS
-	ambient_sound_process_mode = PROCESS_MODE_ALWAYS
-	music_process_mode = PROCESS_MODE_ALWAYS
-
-
-#region Sounds
-
-
-func get_sound_volume() -> float:
-	return db_to_linear(AudioServer.get_bus_volume_db(AudioServer.get_bus_index(sound_effects.bus)))
-
-
-func set_sound_volume(volume_between_0_and_1: float) -> void:
-	_show_shared_bus_warning()
-	AudioServer.set_bus_volume_db(AudioServer.get_bus_index(sound_effects.bus), linear_to_db(volume_between_0_and_1))
-
-
-func play_sound(resource: AudioStream, override_bus: String = "") -> AudioStreamPlayer:
-	return sound_effects.play(resource, override_bus)
-
-
-func play_sound_with_pitch(resource: AudioStream, pitch: float = 1.0, override_bus: String = "") -> AudioStreamPlayer:
-	var player: AudioStreamPlayer = sound_effects.play(resource, override_bus)
-	player.pitch_scale = pitch
-	return player
-
-
-func stop_sound(resource: AudioStream) -> void:
-	return sound_effects.stop(resource)
-
-
-func set_default_sound_bus(bus: String) -> void:
-	sound_effects.bus = bus
-
-
-#endregion
-
-#region UI sounds
-
-
-func get_ui_sound_volume() -> float:
-	return db_to_linear(AudioServer.get_bus_volume_db(AudioServer.get_bus_index(ui_sound_effects.bus)))
-
-
-func set_ui_sound_volume(volume_between_0_and_1: float) -> void:
-	_show_shared_bus_warning()
-	AudioServer.set_bus_volume_db(AudioServer.get_bus_index(ui_sound_effects.bus), linear_to_db(volume_between_0_and_1))
-
-
-func play_ui_sound(resource: AudioStream, override_bus: String = "") -> AudioStreamPlayer:
-	return ui_sound_effects.play(resource, override_bus)
-
-
-func play_ui_sound_with_pitch(resource: AudioStream, pitch: float = 1.0, override_bus: String = "") -> AudioStreamPlayer:
-	var player: AudioStreamPlayer = ui_sound_effects.play(resource, override_bus)
-	player.pitch_scale = pitch
-	return player
-
-
-func stop_ui_sound(resource: AudioStream) -> void:
-	return ui_sound_effects.stop(resource)
-
-
-func set_default_ui_sound_bus(bus: String) -> void:
-	ui_sound_effects.bus = bus
-
-
-#endregion
-
-#region Ambient sound
-
-
-func get_ambient_sound_volume() -> float:
-	return db_to_linear(AudioServer.get_bus_volume_db(AudioServer.get_bus_index(ambient_sounds.bus)))
-
-
-func set_ambient_sound_volume(volume_between_0_and_1: float) -> void:
-	_show_shared_bus_warning()
-	AudioServer.set_bus_volume_db(AudioServer.get_bus_index(ambient_sounds.bus), linear_to_db(volume_between_0_and_1))
-
-
-func play_ambient_sound(resource: AudioStream, fade_in_duration: float = 0.0, override_bus: String = "") -> AudioStreamPlayer:
-	return ambient_sounds.play(resource, fade_in_duration, override_bus)
-
-
-func stop_ambient_sound(resource: AudioStream, fade_out_duration: float = 0.0) -> void:
-	ambient_sounds.stop(resource, fade_out_duration)
-
-
-func stop_all_ambient_sounds(fade_out_duration: float = 0.0) -> void:
-	ambient_sounds.stop_all(fade_out_duration)
-
-
-func set_default_ambient_sound_bus(bus: String) -> void:
-	ambient_sounds.bus = bus
-
-
-#endregion
-
-#region Music
-
-func get_music_volume() -> float:
-	return db_to_linear(AudioServer.get_bus_volume_db(AudioServer.get_bus_index(music.bus)))
-
-
-func set_music_volume(volume_between_0_and_1: float) -> void:
-	_show_shared_bus_warning()
-	AudioServer.set_bus_volume_db(AudioServer.get_bus_index(music.bus), linear_to_db(volume_between_0_and_1))
-
-
-func play_music(resource: AudioStream, crossfade_duration: float = 0.0, override_bus: String = "") -> AudioStreamPlayer:
-	return music.play(resource, 0.0,  0.0, crossfade_duration, override_bus)
-
-
-func play_music_from_position(resource: AudioStream, position: float = 0.0, crossfade_duration: float = 0.0, override_bus: String = "") -> AudioStreamPlayer:
-	return music.play(resource, position, 0.0, crossfade_duration, override_bus)
-
-
-func play_music_at_volume(resource: AudioStream, volume: float = 0.0, crossfade_duration: float = 0.0, override_bus: String = "") -> AudioStreamPlayer:
-	return music.play(resource, 0.0, volume, crossfade_duration, override_bus)
-
-
-func play_music_from_position_at_volume(resource: AudioStream, position: float = 0.0, volume: float = 0.0, crossfade_duration: float = 0.0, override_bus: String = "") -> AudioStreamPlayer:
-	return music.play(resource, position, volume, crossfade_duration, override_bus)
-
-
-func get_music_track_history() -> Array:
-	return music.track_history
-
-
-func get_last_played_music_track() -> String:
-	return music.track_history[0]
-
-
-func is_music_playing(resource: AudioStream = null) -> bool:
-	return music.is_playing(resource)
-
-
-func is_music_track_playing(resource_path: String) -> bool:
-	return music.is_track_playing(resource_path)
-
-
-func get_currently_playing_music() -> Array:
-	return music.get_currently_playing()
-
-
-func get_currently_playing_music_tracks() -> Array:
-	return music.get_currently_playing_tracks()
-
-
-func pause_music(resource: AudioStream = null) -> void:
-	music.pause(resource)
-
-
-func resume_music(resource: AudioStream = null) -> void:
-	music.resume(resource)
-
-
-func stop_music(fade_out_duration: float = 0.0) -> void:
-	music.stop(fade_out_duration)
-
-
-func set_default_music_bus(bus: String) -> void:
-	music.bus = bus
-
-
-#endregion
-
-#region helpers
-
-
-func _show_shared_bus_warning() -> void:
-	if "Master" in [music.bus, sound_effects.bus, ui_sound_effects.bus, ambient_sounds.bus]:
-		push_warning("Using the Master sound bus directly isn't recommended.")
-	if music.bus == sound_effects.bus or music.bus == ui_sound_effects.bus:
-		push_warning("Both music and sounds are using the same bus: %s" % music.bus)
-
-
-#endregion
+## Generic audio playback (gd-common). Autoload: SoundManager.
+## SFX via 8-channel pool; music on a dedicated player with fade;
+## ambient sounds on independent players.
+## Audio *assets* stay in the consuming project; pass AudioStreams in.
+##
+## Process-mode split:
+##   * SFX / Ambient containers follow the host (PROCESS_MODE_INHERIT) —
+##     they pause when get_tree().paused = true.
+##   * Music container is PROCESS_MODE_ALWAYS so fade/cross-fade
+##     keeps ticking even during pause; use pause_music() to silence it.
+
+const SFX_POOL_SIZE := 8
+const SILENCE_DB := -60.0
+
+signal music_paused
+signal music_resumed
+
+var _sfx_root: Node
+var _music_root: Node
+var _ambient_root: Node
+var _sfx_players: Array[AudioStreamPlayer] = []
+var _music_player: AudioStreamPlayer
+var _music_tween: Tween
+var _music_paused_via_api: bool = false
+var _music_volume_before_pause: float = 0.0
+var _ambient_players: Dictionary = {}  # String (resource_path or instance_id) -> AudioStreamPlayer
+
+
+func _ready() -> void:
+	_ensure_roots()
+	for i in SFX_POOL_SIZE:
+		var p := AudioStreamPlayer.new()
+		_sfx_root.add_child(p)
+		_sfx_players.append(p)
+	_music_player = AudioStreamPlayer.new()
+	_music_root.add_child(_music_player)
+
+
+func _ensure_roots() -> void:
+	if _sfx_root == null:
+		_sfx_root = Node.new()
+		_sfx_root.name = "SfxRoot"
+		_sfx_root.process_mode = Node.PROCESS_MODE_INHERIT
+		add_child(_sfx_root)
+	if _ambient_root == null:
+		_ambient_root = Node.new()
+		_ambient_root.name = "AmbientRoot"
+		_ambient_root.process_mode = Node.PROCESS_MODE_INHERIT
+		add_child(_ambient_root)
+	if _music_root == null:
+		_music_root = Node.new()
+		_music_root.name = "MusicRoot"
+		_music_root.process_mode = Node.PROCESS_MODE_ALWAYS
+		add_child(_music_root)
+
+
+# ---- SFX (short one-shot sounds) ----
+
+func play_sound(stream: AudioStream) -> void:
+	if stream == null:
+		return
+	var player := _get_free_sfx_player()
+	player.stream = stream
+	player.volume_db = 0.0
+	player.pitch_scale = 1.0
+	player.play()
+
+
+func play_ui_sound(stream: AudioStream) -> void:
+	play_sound(stream)
+
+
+func stop_all_sfx() -> void:
+	for p in _sfx_players:
+		if p.playing:
+			p.stop()
+
+
+func _get_free_sfx_player() -> AudioStreamPlayer:
+	for p in _sfx_players:
+		if not p.playing:
+			return p
+	return _sfx_players[0]  # all busy: preempt the oldest
+
+
+# ---- Music ----
+
+func play_music(stream: AudioStream, crossfade: float = 1.5) -> void:
+	if stream == null:
+		return
+	_music_paused_via_api = false
+	if _music_tween and _music_tween.is_valid():
+		_music_tween.kill()
+	if crossfade <= 0.0:
+		_music_player.stream = stream
+		_music_player.volume_db = 0.0
+		_music_player.play()
+		return
+	_music_player.stream = stream
+	_music_player.volume_db = SILENCE_DB
+	_music_player.play()
+	_music_tween = create_tween()
+	_music_tween.tween_property(_music_player, "volume_db", 0.0, crossfade)
+
+
+func stop_music(fade: float = 1.5) -> void:
+	_music_paused_via_api = false
+	if fade <= 0.0:
+		_music_player.stop()
+		return
+	if _music_tween and _music_tween.is_valid():
+		_music_tween.kill()
+	_music_tween = create_tween()
+	_music_tween.tween_property(_music_player, "volume_db", SILENCE_DB, fade)
+	_music_tween.tween_callback(_music_player.stop)
+
+
+func pause_music(fade: float = 0.0) -> void:
+	if _music_paused_via_api:
+		return
+	_music_paused_via_api = true
+	_music_volume_before_pause = _music_player.volume_db
+	_fade_music_to(SILENCE_DB, fade)
+	music_paused.emit()
+
+
+func resume_music(fade: float = 0.0) -> void:
+	if not _music_paused_via_api:
+		return
+	_music_paused_via_api = false
+	var target_db: float = _music_volume_before_pause
+	if target_db <= SILENCE_DB + 0.01:
+		target_db = 0.0
+	_fade_music_to(target_db, fade)
+	music_resumed.emit()
+
+
+func is_music_paused() -> bool:
+	return _music_paused_via_api
+
+
+func _fade_music_to(target_db: float, fade: float) -> void:
+	if _music_tween and _music_tween.is_valid():
+		_music_tween.kill()
+	if fade <= 0.0:
+		_music_player.volume_db = target_db
+		return
+	_music_tween = create_tween()
+	_music_tween.tween_property(_music_player, "volume_db", target_db, fade)
+
+
+func set_bus_volume_db(bus_name: String, volume_db: float) -> void:
+	var idx := AudioServer.get_bus_index(bus_name)
+	if idx >= 0:
+		AudioServer.set_bus_volume_db(idx, volume_db)
+
+
+# ---- Ambient (long looping background sounds) ----
+
+func _ambient_key(stream: AudioStream) -> String:
+	if stream.resource_path != "":
+		return stream.resource_path
+	return str(stream.get_instance_id())
+
+
+func play_ambient_sound(stream: AudioStream, fade: float = 2.0) -> void:
+	if stream == null:
+		return
+	var key := _ambient_key(stream)
+	if _ambient_players.has(key):
+		var existing: AudioStreamPlayer = _ambient_players[key]
+		if existing.playing:
+			return
+		existing.queue_free()
+		_ambient_players.erase(key)
+	_fade_in_ambient(stream, fade)
+
+
+func _fade_in_ambient(stream: AudioStream, fade: float) -> void:
+	var player := AudioStreamPlayer.new()
+	player.stream = stream
+	player.bus = &"Master"
+	_ambient_root.add_child(player)
+	_ambient_players[_ambient_key(stream)] = player
+	if fade <= 0.0:
+		player.volume_db = 0.0
+		player.play()
+		return
+	player.volume_db = SILENCE_DB
+	player.play()
+	var tw := create_tween()
+	tw.tween_property(player, "volume_db", 0.0, fade)
+
+
+func stop_ambient_sound(stream: AudioStream, fade: float = 1.5) -> void:
+	if stream == null:
+		return
+	var key := _ambient_key(stream)
+	if not _ambient_players.has(key):
+		return
+	var player: AudioStreamPlayer = _ambient_players[key]
+	_ambient_players.erase(key)
+	_fade_out_and_free(player, fade)
+
+
+func stop_all_ambient_sounds(fade: float = 1.5) -> void:
+	for player: AudioStreamPlayer in _ambient_players.values():
+		_fade_out_and_free(player, fade)
+	_ambient_players.clear()
+
+
+func _fade_out_and_free(player: AudioStreamPlayer, fade: float) -> void:
+	if not is_instance_valid(player):
+		return
+	if fade <= 0.0:
+		player.stop()
+		player.queue_free()
+		return
+	var tw := create_tween()
+	tw.tween_property(player, "volume_db", SILENCE_DB, fade)
+	tw.tween_callback(player.stop)
+	tw.tween_callback(player.queue_free)

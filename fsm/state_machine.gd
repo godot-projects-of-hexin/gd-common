@@ -10,11 +10,17 @@ signal guard_failed(from_state: StringName, event: StringName)
 ## Emitted when try_transition() finds no matching transition for the event.
 signal unhandled_event(event: StringName)
 
-## Arbitrary owner/context object states can read via machine.context.
+## Arbitrary data object that states can read via `machine.context`.
+## Set via the constructor (`GxStateMachine.new(my_data)`).
+## Use this for shared gameplay data (e.g. a CharacterBody, a score dict).
+## Prefer `attach_to` when you only need to record which Node owns this machine.
 var context: Variant = null
 
-## Optional host the machine is attached to (set via attach_to). Read-only.
-var attached_host: Node = null
+## Node this machine is associated with (set via attach_to). Read-only.
+## The machine itself stays a RefCounted and is NOT added as a child.
+## Use this when external systems need to correlate the machine with a scene
+## object (e.g. "find the FSM attached to the player") — it is a reference
+## only, not a data channel. States should read `context` for game data.
 
 var _states: Dictionary = {}        # StringName -> GxState
 var _current: GxState = null

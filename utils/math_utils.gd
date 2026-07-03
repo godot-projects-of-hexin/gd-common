@@ -22,8 +22,8 @@ static func chance(probability: float) -> bool:
 
 
 ## Random element from a non-empty array, else null.
-## Accepts both untyped `Array` and typed `Array[T]` (coerced via Variant).
-static func pick_random(arr) -> Variant:
+## Accepts both typed `Array[T]` and untyped `Array` (coerced via Variant).
+static func pick_random(arr: Array) -> Variant:
 	if arr == null or arr.is_empty():
 		return null
 	return arr[randi() % arr.size()]
