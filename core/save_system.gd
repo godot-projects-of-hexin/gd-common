@@ -53,7 +53,17 @@ func load_from_slot(slot: int) -> Dictionary:
 	var data: Dictionary = {}
 	for key in cfg.get_section_keys(DATA_SECTION):
 		data[key] = cfg.get_value(DATA_SECTION, key)
-	var from_version: int = int(data.get(VERSION_KEY, 1))
+	# Reject corrupted VERSION_KEY (string, float, etc.). A bad version used to
+	# silently coerce to 0, then trigger the migrator with garbage from_version.
+	# Using typeof() instead of `is int` for Godot 4.3+ compatibility.
+	var raw_version = data.get(VERSION_KEY, 1)
+	var from_version: int = 1
+	if typeof(raw_version) == TYPE_INT:
+		from_version = raw_version
+	elif typeof(raw_version) == TYPE_FLOAT and float(raw_version) == floor(float(raw_version)):
+		from_version = int(raw_version)
+	else:
+		push_warning("SaveSystem.load_from_slot: invalid VERSION_KEY %s in slot %d; treating as 1" % [raw_version, slot])
 	data.erase(VERSION_KEY)
 	if from_version != _version and _migrator.is_valid():
 		data = _migrator.call(data, from_version, _version)

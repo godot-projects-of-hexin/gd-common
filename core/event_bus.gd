@@ -9,8 +9,8 @@ var _subscribers: Dictionary = {}  # StringName -> Array[Callable]
 ## Subscribe a callable to an event. Duplicate subscriptions are ignored.
 func subscribe(event: StringName, callable: Callable) -> void:
 	if not _subscribers.has(event):
-		_subscribers[event] = []
-	var list: Array = _subscribers[event]
+		_subscribers[event] = [] as Array[Callable]
+	var list: Array[Callable] = _subscribers[event] as Array[Callable]
 	if not list.has(callable):
 		list.append(callable)
 
@@ -19,7 +19,7 @@ func subscribe(event: StringName, callable: Callable) -> void:
 func unsubscribe(event: StringName, callable: Callable) -> void:
 	if not _subscribers.has(event):
 		return
-	var list: Array = _subscribers[event]
+	var list: Array[Callable] = _subscribers[event] as Array[Callable]
 	list.erase(callable)
 	if list.is_empty():
 		_subscribers.erase(event)
@@ -29,8 +29,8 @@ func unsubscribe(event: StringName, callable: Callable) -> void:
 func emit_event(event: StringName, payload: Variant = null) -> void:
 	if not _subscribers.has(event):
 		return
-	var list: Array = _subscribers[event]
-	var stale: Array = []
+	var list: Array[Callable] = _subscribers[event] as Array[Callable]
+	var stale: Array[Callable] = []
 	for callable: Callable in list.duplicate():
 		if callable.is_valid():
 			callable.call(payload)

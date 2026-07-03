@@ -27,6 +27,13 @@ func update(delta: float) -> void:
 		finished.emit()
 
 
+## Reset the cooldown to 0 WITHOUT emitting the `finished` signal.
+## Use when you want to abort a pending trigger (e.g. player interrupted
+## the action); reach for start() when you want a fresh tick instead.
+func cancel() -> void:
+	time_left = 0.0
+
+
 func is_ready() -> bool:
 	return time_left <= 0.0
 

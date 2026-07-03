@@ -6,7 +6,7 @@ Reusable **generic layer** for Godot 4 projects, shipped as an addon and consume
 
 
 > Scope: genre-agnostic infrastructure only. **No game-specific gameplay.**
-> Convention: shared `class_name` prefix `Gx`; autoload names plain (`EventBus`, `SaveSystem`, `AudioManager`, `UIManager`).
+> Convention: shared `class_name` prefix `Gx`; autoload names plain (`EventBus`, `SaveSystem`, `SoundManager`, `UIManager`).
 
 ## Install
 
@@ -15,7 +15,7 @@ git submodule add file:///D:/GitRepos/gd-common addons/gd-common
 ```
 
 Enable **gd-common** in Project Settings → Plugins. The plugin registers its
-autoload singletons (`EventBus`, `SaveSystem`, `AudioManager`, `UIManager`).
+autoload singletons (`EventBus`, `SaveSystem`, `SoundManager`, `UIManager`).
 
 > In headless/CI you can reference scripts via `preload("res://addons/gd-common/...")`
 > to avoid depending on the editor's global class cache.
