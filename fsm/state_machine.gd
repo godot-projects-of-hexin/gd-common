@@ -21,6 +21,7 @@ var context: Variant = null
 ## Use this when external systems need to correlate the machine with a scene
 ## object (e.g. "find the FSM attached to the player") — it is a reference
 ## only, not a data channel. States should read `context` for game data.
+var attached_host: Node = null
 
 var _states: Dictionary = {}        # StringName -> GxState
 var _current: GxState = null
