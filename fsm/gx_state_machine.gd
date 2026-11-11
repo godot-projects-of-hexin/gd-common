@@ -33,8 +33,7 @@ var _transitions: Array[GxStateMachine.TransitionData] = []
 # Internal typed record for one transition entry. Replaces an untyped Dictionary
 # so missing fields fail at construction time instead of producing a runtime
 # `KeyError` deep inside try_transition().
-class TransitionData:
-	extends RefCounted
+class TransitionData extends RefCounted:
 	var from: StringName = &""
 	var event: StringName = &""
 	var target: StringName = &""
@@ -73,7 +72,11 @@ func add_state(state_name: StringName, state: GxState) -> GxStateMachine:
 ## Unknown state names are reported via push_error() and the entry is dropped
 ## (mirrors add_state's error policy; does not use assert so release builds behave
 ## the same as debug builds).
-func add_transition(from_state: StringName, event: StringName, target: StringName, guard: Callable = Callable()) -> GxStateMachine:
+func add_transition(
+		from_state: StringName,
+		event: StringName,
+		target: StringName,
+		guard: Callable = Callable()) -> GxStateMachine:
 	if not _states.has(from_state):
 		push_error("GxStateMachine.add_transition: unknown from_state '%s'" % from_state)
 		return self

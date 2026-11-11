@@ -18,7 +18,7 @@ func _init() -> void:
 
 
 func _make_gauge(max_v: float = 100.0, start_full: bool = true) -> Node:
-	var s: Script = load("res://addons/gd-common/components/gauge_component.gd")
+	var s: Script = load("res://addons/gd-common/components/gx_gauge_component.gd")
 	var g: Node = s.new()
 	g.max_value = max_v
 	g.start_full = start_full

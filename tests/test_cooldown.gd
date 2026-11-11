@@ -17,7 +17,7 @@ func _init() -> void:
 
 
 func _t_starts_not_ready_then_ready_after_update() -> int:
-	var s: Script = load("res://addons/gd-common/utils/cooldown.gd")
+	var s: Script = load("res://addons/gd-common/utils/gx_cooldown.gd")
 	var cd = s.new(1.0)
 	if cd.is_ready(): return 1
 	cd.start(0.5)
@@ -28,7 +28,7 @@ func _t_starts_not_ready_then_ready_after_update() -> int:
 
 
 func _t_finished_fires_once_at_zero() -> int:
-	var s: Script = load("res://addons/gd-common/utils/cooldown.gd")
+	var s: Script = load("res://addons/gd-common/utils/gx_cooldown.gd")
 	var cd = s.new(0.5)
 	var hits: Array = [0]
 	cd.finished.connect(func(): hits[0] += 1)
@@ -41,7 +41,7 @@ func _t_finished_fires_once_at_zero() -> int:
 
 
 func _t_cancel_resets_without_signal() -> int:
-	var s: Script = load("res://addons/gd-common/utils/cooldown.gd")
+	var s: Script = load("res://addons/gd-common/utils/gx_cooldown.gd")
 	var cd = s.new(1.0)
 	cd.start(1.0)
 	var hits: Array = [0]
@@ -53,7 +53,7 @@ func _t_cancel_resets_without_signal() -> int:
 
 
 func _t_progress_linear_to_one() -> int:
-	var s: Script = load("res://addons/gd-common/utils/cooldown.gd")
+	var s: Script = load("res://addons/gd-common/utils/gx_cooldown.gd")
 	var cd = s.new(1.0)
 	cd.start(1.0)
 	if absf(cd.progress() - 0.0) > 0.001: return 1
@@ -65,7 +65,7 @@ func _t_progress_linear_to_one() -> int:
 
 
 func _t_start_with_new_duration_overrides() -> int:
-	var s: Script = load("res://addons/gd-common/utils/cooldown.gd")
+	var s: Script = load("res://addons/gd-common/utils/gx_cooldown.gd")
 	var cd = s.new(1.0)
 	cd.start(1.0)
 	cd.start(2.0)

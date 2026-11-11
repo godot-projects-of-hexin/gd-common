@@ -1,0 +1,20 @@
+# Godot 官方规范要求 GDScript 使用 LF 换行。
+# 这里强制统一，避免在 Windows 上 clone 后被自动转成 CRLF。
+* text=auto eol=lf
+
+*.gd      text eol=lf
+*.md      text eol=lf
+*.cfg     text eol=lf
+*.sh      text eol=lf
+
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.webp    binary
+*.svg     text eol=lf
+*.ogg     binary
+*.wav     binary
+*.mp3     binary
+*.ttf     binary
+*.otf     binary
+*.ico     binary

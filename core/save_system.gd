@@ -69,7 +69,10 @@ func load_from_slot(slot: int) -> Dictionary:
 	elif typeof(raw_version) == TYPE_FLOAT and float(raw_version) == floor(float(raw_version)):
 		from_version = int(raw_version)
 	else:
-		push_warning("SaveSystem.load_from_slot: invalid VERSION_KEY %s in slot %d; treating as 1" % [raw_version, slot])
+		push_warning(
+			"SaveSystem.load_from_slot: invalid VERSION_KEY %s in slot %d; treating as 1"
+			% [raw_version, slot]
+		)
 	data.erase(VERSION_KEY)
 	if from_version != _version and _migrator.is_valid():
 		data = _migrator.call(data, from_version, _version)

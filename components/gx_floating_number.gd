@@ -7,18 +7,53 @@ extends CanvasLayer
 enum Preset { DEFAULT, DAMAGE, HEAL, CRITICAL, MUTED }
 
 const PRESET_CFG := {
-	Preset.DEFAULT:  {color = Color(0.95, 0.95, 0.95), scale_start = 1.6, font_size = 18, float_distance = 40.0, wobble = 10.0},
-	Preset.DAMAGE:   {color = Color(1.0,  0.25, 0.25), scale_start = 1.5, font_size = 20, float_distance = 40.0, wobble = 10.0},
-	Preset.HEAL:     {color = Color(0.25, 1.0,  0.35), scale_start = 1.4, font_size = 18, float_distance = 38.0, wobble = 10.0},
-	Preset.CRITICAL: {color = Color(1.0,  0.6,  0.0),  scale_start = 2.5, font_size = 28, float_distance = 60.0, wobble = 20.0},
-	Preset.MUTED:    {color = Color(0.55, 0.55, 0.55), scale_start = 1.2, font_size = 16, float_distance = 30.0, wobble = 6.0},
+	Preset.DEFAULT: {
+		color = Color(0.95, 0.95, 0.95),
+		scale_start = 1.6,
+		font_size = 18,
+		float_distance = 40.0,
+		wobble = 10.0,
+	},
+	Preset.DAMAGE: {
+		color = Color(1.0, 0.25, 0.25),
+		scale_start = 1.5,
+		font_size = 20,
+		float_distance = 40.0,
+		wobble = 10.0,
+	},
+	Preset.HEAL: {
+		color = Color(0.25, 1.0, 0.35),
+		scale_start = 1.4,
+		font_size = 18,
+		float_distance = 38.0,
+		wobble = 10.0,
+	},
+	Preset.CRITICAL: {
+		color = Color(1.0, 0.6, 0.0),
+		scale_start = 2.5,
+		font_size = 28,
+		float_distance = 60.0,
+		wobble = 20.0,
+	},
+	Preset.MUTED: {
+		color = Color(0.55, 0.55, 0.55),
+		scale_start = 1.2,
+		font_size = 16,
+		float_distance = 30.0,
+		wobble = 6.0,
+	},
 }
 
 const DEFAULT_DURATION := 0.8
 
 
-## Spawn a floating number using a preset style. Pass overrides to tweak individual params.
-func spawn(pos: Vector2, text: String, preset: Preset = Preset.DEFAULT, overrides: Dictionary = {}) -> void:
+## Spawn a floating number using a preset style.
+## Pass overrides to tweak individual params.
+func spawn(
+		pos: Vector2,
+		text: String,
+		preset: Preset = Preset.DEFAULT,
+		overrides: Dictionary = {}) -> void:
 	var cfg: Dictionary = PRESET_CFG[preset].duplicate()
 	cfg.merge(overrides)
 	_emit(pos, text, cfg)
@@ -58,7 +93,13 @@ func _emit(pos: Vector2, text: String, cfg: Dictionary) -> void:
 	_play_animation(label, label.position, scale_start, float_dist, wobble, duration)
 
 
-func _play_animation(label: Label, start_pos: Vector2, scale_start: float, float_dist: float, wobble: float, duration: float) -> void:
+func _play_animation(
+		label: Label,
+		start_pos: Vector2,
+		scale_start: float,
+		float_dist: float,
+		wobble: float,
+		duration: float) -> void:
 	label.scale = Vector2(scale_start, scale_start)
 
 	var tw := create_tween().set_parallel()

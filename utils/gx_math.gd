@@ -11,7 +11,12 @@ static func approach(current: float, target: float, delta: float) -> float:
 
 
 ## Remap value from one range to another, clamped to [out_min, out_max].
-static func remap_clamped(value: float, in_min: float, in_max: float, out_min: float, out_max: float) -> float:
+static func remap_clamped(
+		value: float,
+		in_min: float,
+		in_max: float,
+		out_min: float,
+		out_max: float) -> float:
 	var t := clampf(inverse_lerp(in_min, in_max, value), 0.0, 1.0)
 	return lerpf(out_min, out_max, t)
 
