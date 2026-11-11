@@ -24,6 +24,7 @@ func _process(_delta: float) -> bool:
 	failures += _t_bind_without_init_skips_first_call()
 	failures += _t_no_emit_when_value_unchanged()
 	failures += _t_set_value_silent_does_not_emit()
+	failures += _t_notify_replays_the_current_value()
 	failures += _t_unbind_stops_delivery()
 	failures += _t_duplicate_bind_is_ignored()
 	failures += _t_custom_comparer_is_used()
@@ -85,6 +86,24 @@ func _t_set_value_silent_does_not_emit() -> int:
 		return _fail("set_value_silent must not emit")
 	if int(property.get_value()) != 42:
 		return _fail("set_value_silent did not store the value")
+	return 0
+
+
+func _t_notify_replays_the_current_value() -> int:
+	var property := GxBindableProperty.new(5)
+	var observer := Observer.new()
+	property.bind(observer.on_value)
+	property.set_value_silent(42)
+	if observer.values != [5]:
+		return _fail("silent write must not notify")
+	property.notify()
+	if observer.values != [5, 42]:
+		return _fail("notify() should replay the current value, got %s" % str(observer.values))
+	if int(property.get_value()) != 42:
+		return _fail("notify() must not change the stored value")
+	property.notify()
+	if observer.values != [5, 42, 42]:
+		return _fail("notify() should work repeatedly without a value change")
 	return 0
 
 

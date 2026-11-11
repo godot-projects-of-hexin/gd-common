@@ -83,6 +83,7 @@ func initialize() -> void:
 	if _is_initialized:
 		push_warning("GxArchitecture.initialize: already initialized; ignoring")
 		return
+	GxWriteGuard.begin()
 	_on_register()
 	for instance in _utilities.values():
 		var utility := instance as GxUtility
@@ -96,8 +97,25 @@ func initialize() -> void:
 		var system := instance as GxSystem
 		if system != null:
 			system._on_init()
+	GxWriteGuard.end()
 	_is_initialized = true
 	initialized.emit()
+
+
+## Mark every [GxBindableProperty] declared on a registered Model so debug
+## builds can report writes that bypass a Command. Standalone bindables (unit
+## tests, ad-hoc observable values) are never marked, so the guard cannot
+## misfire on them.
+func _mark_model_bindables(model: GxModel) -> void:
+	if not GxWriteGuard.is_active():
+		return
+	for info: Dictionary in model.get_property_list():
+		var name := String(info.get("name", ""))
+		if name.is_empty() or name.begins_with("_"):
+			continue
+		var value: Variant = model.get(name)
+		if value is GxBindableProperty:
+			(value as GxBindableProperty)._set_guarded(true)
 
 
 ## True once [method initialize] has finished.
@@ -113,7 +131,9 @@ func register_utility(utility: GxUtility) -> GxArchitecture:
 		return self
 	_utilities.add(utility)
 	if _is_initialized:
+		GxWriteGuard.begin()
 		utility._on_init()
+		GxWriteGuard.end()
 	return self
 
 
@@ -124,8 +144,11 @@ func register_model(model: GxModel) -> GxArchitecture:
 		return self
 	model._bind_architecture(self)
 	_models.add(model)
+	_mark_model_bindables(model)
 	if _is_initialized:
+		GxWriteGuard.begin()
 		model._on_init()
+		GxWriteGuard.end()
 	return self
 
 
@@ -137,7 +160,9 @@ func register_system(system: GxSystem) -> GxArchitecture:
 	system._bind_architecture(self)
 	_systems.add(system)
 	if _is_initialized:
+		GxWriteGuard.begin()
 		system._on_init()
+		GxWriteGuard.end()
 	return self
 
 
@@ -172,7 +197,9 @@ func send_command(command: GxCommand) -> void:
 		push_error("GxArchitecture.send_command: command is null")
 		return
 	command._bind_architecture(self)
+	GxWriteGuard.begin()
 	command._on_execute()
+	GxWriteGuard.end()
 
 
 ## Run a Query and return its answer.
@@ -185,8 +212,11 @@ func send_query(query: GxQuery) -> Variant:
 
 
 ## Broadcast a fact that already happened, keyed by the event's own class.
+## System handlers run synchronously, so they share the caller's write scope.
 func send_event(event: Object) -> void:
+	GxWriteGuard.begin()
 	_events.send(event)
+	GxWriteGuard.end()
 
 
 ## React to an event class. The handler takes exactly one argument: the event.

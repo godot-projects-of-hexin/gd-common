@@ -33,7 +33,7 @@ git submodule update --init --recursive
 
 | 目录 | 内容 | 基类 |
 |---|---|---|
-| `architecture/` | Architecture / Model / System / Utility / Command / Query / Event / BindableProperty / Controller | `RefCounted`（Controller 节点版是 `Node`） |
+| `architecture/` | Architecture / Model / System / Utility / Command / Query / Event / BindableProperty / Controller / WriteGuard | `RefCounted`（Controller 节点版是 `Node`） |
 | `core/` | EventBus、SaveSystem、UIManager | `Node`（autoload） |
 | `audio/` | AudioManager | `Node`（autoload） |
 | `components/` | GxGaugeComponent、GxFloatingNumber | `Node` / `CanvasLayer` |
@@ -93,6 +93,9 @@ var player := architecture.get_model(PlayerModel) as PlayerModel
 ```
 
 查询会沿继承链回退，所以注册子类、按父类取也能命中。
+
+`initialize()`、各层 `_on_init()`、`send_command()` 与 `send_event()` 会自动包住受控写入
+上下文 `GxWriteGuard`，业务代码不需要（也不应该）自己开作用域；见 `GxWriteGuard` 一节。
 
 ### 各层基类
 
@@ -179,6 +182,7 @@ static func create(value: int) -> ScoreChangedEvent:
 | `GxBindableProperty.new(initial, comparer := Callable())` | `comparer(a, b) -> bool` 判定「相等」，可选 |
 | `get_value() / set_value(v)` | 读写；只有真的变了才发信号 |
 | `set_value_silent(v)` | 写入不发信号（读档场景） |
+| `notify()` | 不改值，把当前值重播给所有订阅者（读档后统一重建界面） |
 | `bind(handler)` | 订阅，并**立刻**用当前值回调一次 |
 | `bind_without_init(handler)` | 只订阅，不立刻回调 |
 | `unbind(handler) / is_bound(handler) / unbind_all()` | 退订与查询 |
@@ -190,6 +194,30 @@ var health := GxBindableProperty.new(
 	func(a: float, b: float) -> bool: return is_equal_approx(a, b),
 )
 ```
+
+### GxWriteGuard
+
+Debug 期的写入护栏，只报告、不阻断。GDScript 没有 private，表现层拿到 Model 后
+技术上仍能直接写 `GxBindableProperty`；真要做硬隔离得给每个 Model 包只读视图，
+会破坏 `as PlayerModel`、`bind` 生命周期和 IOC 语义，所以选择让违规可见。
+
+| 方法 | 说明 |
+|---|---|
+| `is_active()` | debug 构建且非编辑器时为 true |
+| `begin() / end()` | 打开 / 关闭一层受控写入上下文，可嵌套 |
+| `allows_write()` | 当前是否允许写入；release 恒为 true |
+| `report(method_name)` | 记一次违规并 `push_warning` |
+| `violation_count() / reset_violations()` | 测试可观测，供断言用 |
+
+`GxArchitecture` 已经在 `initialize()`、各层 `_on_init()`、`send_command()`、
+`send_event()` 里自动开作用域，业务代码不用碰它。只有注册 Model 的属性会被标记守卫
+（`_mark_model_bindables()`），单测里的独立 observable 不受影响；release 完全跳过。
+测试夹具若必须直接写状态，自己包一层 `begin()/end()`。
+
+**边界**：`send_event()` 是统一同步派发，System 与表现层的事件回调共用同一个写入
+作用域，无法按调用者区分层级。因此表现层在 `register_event` 回调里直接写 Model
+**不会**被报告 —— 守卫覆盖的是回调之外的直接写，不是全部越权写入。
+状态变更仍应走 `send_command()`，别依赖守卫兜底。
 
 ### 表现层
 
@@ -224,7 +252,12 @@ func _on_hit() -> void:
 	_ctrl.send_command(TakeDamageCommand.new(10))
 ```
 
-通过这两者注册的事件与属性绑定，在节点离开场景树时**自动解绑**。节点会被移出再加回时，用 `GxController.new(self, null, false)` 关掉自动解绑并自己管 `dispose()`。
+通过这两者注册的事件与属性绑定，在节点离开场景树时**自动解绑**。
+`GxControllerNode` 已处理重入：节点移出后再加回时 `_ready()` 不会重跑，但
+`NOTIFICATION_ENTER_TREE` 会重建被 dispose 的 controller 并重放 `_on_controller_ready()`，
+所以 `bind` / `register_event` 不会丢（`test_controller_lifecycle` 有专门用例）。
+只有手动持有 `GxController`、且不继承 `GxControllerNode` 的节点会被移出再加回时，
+才需要 `GxController.new(self, null, false)` 关掉自动解绑并自己管 `dispose()`。
 
 ---
 
@@ -232,7 +265,7 @@ func _on_hit() -> void:
 
 ### EventBus（autoload）
 
-字符串键的全局广播，用于**基础设施**消息；业务状态变化走架构 Event。
+字符串键的全局广播，**只用于跨 autoload、与架构无关的轻量通知**（音频提示、过场、调试开关）。业务状态变化一律走架构 Event（`GxTypeEventSystem`，事件类作键）——字符串键没有类型，载荷形状写不进契约里，混用会让分层规则失效。
 
 ```gdscript
 EventBus.subscribe(&"scene_transition_started", _on_transition)
@@ -274,7 +307,12 @@ UIManager.pop_panel()              # 释放栈顶并显示下层
 UIManager.get_top()
 UIManager.stack_size()
 UIManager.clear()                  # 整栈释放，场景切换时用
+UIManager.set_layer(200)           # 与其它 CanvasLayer 冲突时，启动时改层级
+UIManager.get_layer()
 ```
+
+默认 `CanvasLayer.layer = BASE_LAYER`（100）；`set_layer()` 在 push 之前或之后调用都行，
+整个宿主层一起移动，已入栈面板的相对顺序不变。
 
 信号：`panel_pushed(panel)`、`panel_will_pop(panel)`、`panel_popped`。
 
@@ -510,22 +548,29 @@ GODOT=/path/to/godot ./addons/gd-common/tests/run_all.sh
 godot --headless --path . --script res://addons/gd-common/tests/test_architecture.gd
 ```
 
-全部 8 个套件已在 **Godot 4.4 / 4.5 / 4.6 / 4.7 stable** 上逐一实跑通过，
-项目启动零错误。版本基线与跨版本注意事项见 `agent.md` 第 7.0 节。
+当前共 12 个套件，已在 **Godot 4.7 stable** 上实跑通过（项目启动 0 错误 0 泄漏，
+12/12 套件）；4.4 / 4.5 / 4.6 的矩阵复测尚未在改动后重跑。
+版本基线与跨版本注意事项见 `agent.md` 第 7.0 节。
 测试入口必须写成 `_process()` 而不是 `_init()`，原因见 `agent.md` 第 7.2 节。
 
 | 套件 | 覆盖 |
 |---|---|
-| `test_architecture` | 注册、初始化顺序、Command / Query / Event、**分层权限断言** |
-| `test_bindable_property` | 立即回调、去重、静默写入、自定义 comparer |
+| `test_architecture` | 注册、初始化顺序、Command / Query / Event、**分层权限断言**、写守卫违规计数 |
+| `test_bindable_property` | 立即回调、去重、静默写入、`notify()` 重播、自定义 comparer |
 | `test_event_bus` | 订阅、载荷、失效清理 |
 | `test_save_system` | 槽位、版本迁移、损坏存档 |
 | `test_state_machine` | 转移、守卫、信号 |
 | `test_gauge` | 边界、自动变化、信号 |
 | `test_cooldown` | 推进、取消、finished |
-| `test_audio_manager` | 播放器布线、process mode、暂停恢复、总线回退 |
+| `test_audio_manager` | 播放器布线、process mode、暂停恢复、总线回退、Tween 条目清理 |
+| `test_ui_manager` | 面板栈、隐藏下层、信号顺序、层级可配置 |
+| `test_object_pool` | 预热、复用、重复 release、无回调路径 |
+| `test_math` | approach / remap_clamped / chance / pick_random |
+| `test_controller_lifecycle` | tree_exiting 自动释放、dispose 幂等、注册去重、事件解绑、重入重放 hook |
 
 `test_architecture` 里那组 `has_method()` 断言是**分层规则的守卫**：如果有人给 `GxModel` 加了 `get_system()`，它会立刻失败。
+但它只能证明「API 不存在」，证明不了「没人拿到对象后调 public 方法」—— 后者由
+`GxWriteGuard` 在 debug 期报告，两者不是重复检查。
 
 ---
 

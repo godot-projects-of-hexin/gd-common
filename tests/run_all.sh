@@ -20,6 +20,10 @@ SUITES=(
 	test_gauge
 	test_cooldown
 	test_audio_manager
+	test_ui_manager
+	test_object_pool
+	test_math
+	test_controller_lifecycle
 )
 
 if ! command -v "$GODOT" >/dev/null 2>&1; then

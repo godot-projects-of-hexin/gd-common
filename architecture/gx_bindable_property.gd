@@ -33,6 +33,8 @@ signal value_changed(new_value: Variant)
 var _value: Variant = null
 ## Callable(a, b) -> bool returning true when the two values count as equal.
 var _comparer: Callable = Callable()
+## Set only for bindables owned by a registered Model. See [GxWriteGuard].
+var _guarded := false
 
 
 func _init(initial_value: Variant = null, comparer: Callable = Callable()) -> void:
@@ -45,8 +47,20 @@ func get_value() -> Variant:
 	return _value
 
 
+## Framework internal. [GxArchitecture] marks bindables owned by a registered
+## Model; see [GxWriteGuard].
+func _set_guarded(value: bool) -> void:
+	_guarded = value
+
+
+func _check_write(method_name: String) -> void:
+	if _guarded and not GxWriteGuard.allows_write():
+		GxWriteGuard.report(method_name)
+
+
 ## Write the value. Emits [signal value_changed] only on a real change.
 func set_value(new_value: Variant) -> void:
+	_check_write("set_value")
 	if _values_equal(_value, new_value):
 		return
 	_value = new_value
@@ -56,7 +70,15 @@ func set_value(new_value: Variant) -> void:
 ## Write the value without emitting. Use when loading a save, where the UI is
 ## rebuilt afterwards and an extra notification would just be noise.
 func set_value_silent(new_value: Variant) -> void:
+	_check_write("set_value_silent")
 	_value = new_value
+
+
+## Re-broadcast the current value to every bound handler without changing it.
+## Call this after a batch of silent writes (e.g. restoring a save) so views
+## that were already bound can rebuild themselves from the new state.
+func notify() -> void:
+	value_changed.emit(_value)
 
 
 ## Subscribe and receive the current value immediately.

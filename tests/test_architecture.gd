@@ -120,6 +120,7 @@ func _process(_delta: float) -> bool:
 	failures += _t_deinitialize_clears_everything()
 	failures += _t_default_architecture_accessors()
 	failures += _t_unregister_event_stops_delivery()
+	failures += _t_write_guard_reports_unsanctioned_writes()
 	if failures > 0:
 		print("ARCHITECTURE_TEST: %d failure(s)" % failures)
 		quit(1)
@@ -247,6 +248,32 @@ func _t_double_initialize_is_ignored() -> int:
 	architecture.initialize()
 	if architecture.order.size() != count_before:
 		return _fail("initialize() ran twice")
+	return 0
+
+
+func _t_write_guard_reports_unsanctioned_writes() -> int:
+	if not GxWriteGuard.is_active():
+		return 0  # release builds skip the guard, so skip this case too
+	var architecture := _make()
+	var model := architecture.get_model(ProbeDummyModel) as ProbeDummyModel
+	GxWriteGuard.reset_violations()
+	# Standalone bindables are never marked, so they must not be reported.
+	var loose := GxBindableProperty.new(0)
+	loose.set_value(7)
+	if GxWriteGuard.violation_count() != 0:
+		return _fail("standalone bindables must not be guarded")
+	# Writes inside a Command are sanctioned.
+	architecture.send_command(ProbeAddScoreCommand.new(10))
+	if GxWriteGuard.violation_count() != 0:
+		return _fail("writes inside a Command must be allowed")
+	# Direct writes to a registered Model are violations.
+	model.score.set_value(999)
+	if GxWriteGuard.violation_count() != 1:
+		return _fail("set_value outside a write scope should be reported once")
+	model.score.set_value_silent(1000)
+	if GxWriteGuard.violation_count() != 2:
+		return _fail("set_value_silent outside a write scope should be reported once")
+	GxWriteGuard.reset_violations()  # keep the counter clean for later cases
 	return 0
 
 

@@ -2,6 +2,14 @@ extends Node
 ## Global decoupled publish/subscribe event bus (gd-common).
 ## Autoload name: EventBus. Reference globally, e.g. EventBus.emit_event(&"player_died", id).
 ## Subscriber callables must accept exactly one argument (the payload).
+##
+## [b]Boundary[/b]: keys are [StringName] and payloads are untyped [Variant],
+## so use this only for [i]infrastructure[/i] notifications that cross
+## autoloads (audio cues, scene transitions, debug hooks) and carry no business
+## state. Anything describing a change to game state belongs to the typed
+## architecture events instead — [code]GxArchitecture.send_event(ScoreChangedEvent.create(120))[/code]
+## is keyed by an event [b]class[/b] whose fields declare the payload. Do not
+## mix the two: a payload shape mistake here is only visible at runtime.
 
 var _subscribers: Dictionary = {}  # StringName -> Array[Callable]
 

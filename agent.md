@@ -166,6 +166,33 @@ func heal(amount: int) -> void:            # 必须写返回类型
 > 凡是返回 `Variant` 的 API（`weakref`、`instance_from_id`、`Dictionary.get`、
 > `Array` 取下标、`send_query`），一律写显式类型。
 
+### 2.6 Node 之外的基类
+
+能不用 `Node` 就不用，官方给出的梯度：
+
+| 基类 | 内存 | 何时用 |
+|---|---|---|
+| `Object` | 手动释放 | 几乎不用，容易出悬空引用 |
+| `RefCounted` | 自动引用计数 | **默认选择**：数据类、状态机、工具、架构层 |
+| `Resource` | 自动 + 可序列化 + Inspector | 配置、数据表、可在编辑器编辑的资源 |
+| `Node` | 进场景树 | 确实需要生命周期、子节点或场景树能力 |
+
+本库里 `GxArchitecture`、`GxModel`、`GxSystem`、`GxCommand`、`GxQuery`、`GxStateMachine`、`GxCooldown`、`GxObjectPool` 全是 `RefCounted`，只有 autoload 与 `GxGaugeComponent`、`GxFloatingNumber`、`GxControllerNode` 是 `Node`。
+
+### 2.7 Autoload 的使用门槛
+
+官方明确警告 autoload 带来三类问题：**全局状态**、**全局访问**、**全局资源分配**。所以：
+
+| 允许 | 禁止 |
+|---|---|
+| 管理自己的数据、不侵入其他对象的广域系统 | 把玩法逻辑塞进 autoload |
+| 本库的 4 个基础设施 autoload | 为了省事把 Model/System 注册成 autoload |
+| 项目级的单一流程控制器 | 新增第 5、第 6 个 "XxxManager" autoload |
+
+**架构层故意不是 autoload。** 如果 `Architecture` 全局可达，任何节点都能 `get_model()` 直接改状态，分层规则当场失效。项目用一个静态访问器暴露唯一实例，表现层只能通过 `GxController` / `GxControllerNode` 接触它。
+
+新增 autoload 前先问：能不能用 `static func` + `class_name` 的工具类，或 `static var` 解决？能就别加。
+
 ### 2.8 引用环：RefCounted 的反向引用必须是弱引用
 
 两个 `RefCounted` 互相强引用，引用计数永远归不了零，退出时报
@@ -195,33 +222,6 @@ func _resolve_architecture() -> GxArchitecture:
 另外，**`static var` 持有的对象不会随场景树消失**。项目用静态单例暴露架构时，
 必须在退出时主动释放（见 `game-template` 的 `GameFlow._exit_tree()`），
 否则引擎退出检查照样报泄漏。
-
-### 2.6 Node 之外的基类
-
-能不用 `Node` 就不用，官方给出的梯度：
-
-| 基类 | 内存 | 何时用 |
-|---|---|---|
-| `Object` | 手动释放 | 几乎不用，容易出悬空引用 |
-| `RefCounted` | 自动引用计数 | **默认选择**：数据类、状态机、工具、架构层 |
-| `Resource` | 自动 + 可序列化 + Inspector | 配置、数据表、可在编辑器编辑的资源 |
-| `Node` | 进场景树 | 确实需要生命周期、子节点或场景树能力 |
-
-本库里 `GxArchitecture`、`GxModel`、`GxSystem`、`GxCommand`、`GxQuery`、`GxStateMachine`、`GxCooldown`、`GxObjectPool` 全是 `RefCounted`，只有 autoload 与 `GxGaugeComponent`、`GxFloatingNumber`、`GxControllerNode` 是 `Node`。
-
-### 2.7 Autoload 的使用门槛
-
-官方明确警告 autoload 带来三类问题：**全局状态**、**全局访问**、**全局资源分配**。所以：
-
-| 允许 | 禁止 |
-|---|---|
-| 管理自己的数据、不侵入其他对象的广域系统 | 把玩法逻辑塞进 autoload |
-| 本库的 4 个基础设施 autoload | 为了省事把 Model/System 注册成 autoload |
-| 项目级的单一流程控制器 | 新增第 5、第 6 个 "XxxManager" autoload |
-
-**架构层故意不是 autoload。** 如果 `Architecture` 全局可达，任何节点都能 `get_model()` 直接改状态，分层规则当场失效。项目用一个静态访问器暴露唯一实例，表现层只能通过 `GxController` / `GxControllerNode` 接触它。
-
-新增 autoload 前先问：能不能用 `static func` + `class_name` 的工具类，或 `static var` 解决？能就别加。
 
 ---
 
@@ -255,7 +255,11 @@ Controller ──────── send_command ────────▶ Com
 
 ### 3.2 每层的权限
 
-权限不是靠 review 约束的，而是**基类只暴露该层允许的方法**。`GxModel` 上根本没有 `get_system()`，写不出来。
+权限主要靠**基类只暴露该层允许的方法**约束，不是靠 review：`GxModel` 上根本没有
+`get_system()`，写不出来。但 `has_method()` 只能锁住「API 不存在」这一层：表现层一旦
+`get_model()` 拿到实例，GDScript 没有 private / 接口 / 只读视图，仍能调用
+`player.score.set_value()` 这类 public 方法。这层由 `GxWriteGuard` 在 debug 期报告，
+见本节末尾的「写入护栏」。
 
 | 层 | 基类 | 可以 | 不可以 |
 |---|---|---|---|
@@ -267,6 +271,16 @@ Controller ──────── send_command ────────▶ Com
 | 基础设施 | `GxUtility` | 只做自己的事 | 访问任何架构成员 |
 
 `tests/test_architecture.gd` 里有一组 `has_method()` 断言专门守这张表。**如果有人放宽了权限，那组测试会红。** 不要为了方便去改它。
+
+**写入护栏（`GxWriteGuard`）**
+
+机制与 API 见 `README.md` 的 `GxWriteGuard` 小节：debug 下受控上下文之外的
+`set_value()` / `set_value_silent()` 会 `push_warning` 并累计 `violation_count()`，
+release 跳过，独立 observable 不受影响。
+
+改共享库时守住三条：① 新增合法写入入口必须自己开 `begin()/end()`；② 不要为了
+「让测试安静」在业务代码里关掉守卫，测试夹具自己包作用域；③ `test_architecture`
+里故意触发的两条写守卫 warning 是预期输出，不是回归。
 
 ### 3.3 各层职责
 
@@ -359,6 +373,17 @@ _on_register()  →  Utility._on_init()  →  Model._on_init()  →  System._on_
 业务状态变化  →  架构 Event 或 BindableProperty
 基础设施广播  →  EventBus
 ```
+
+`EventBus` 的三条硬边界（写业务代码前先看这里）：
+
+1. 键是 `StringName`、载荷是裸 `Variant`，没有事件类来声明字段 —— 只用于
+   **跨 autoload 的轻量通知**（过场开始、音频提示、调试开关），且发送方与接收方
+   都不属于架构层。
+2. 架构内一律走 `GxTypeEventSystem`（事件类作键）。`GxModel` / `GxSystem` /
+   `GxCommand` / `GxQuery` / `GxController` 里出现 `EventBus.emit_event` 视为分层违规：
+   这些层不该知道 autoload 的存在。
+3. 判断口诀：**「某个游戏状态变了」→ 架构 Event；「某个全局服务要打个招呼」→ EventBus。**
+   两种机制都能做的时候选架构 Event。
 
 架构 Event 用**事件类**而不是字符串，因为载荷字段写在类里，生产者和消费者不可能对不上：
 
@@ -455,12 +480,15 @@ gd-common/
 **gd-common 支持 Godot 4.4 及以上所有 4.x 版本。** 消费项目的 `project.godot`
 声明 `config/features=PackedStringArray("4.4")`，那是**项目格式下限**，不是锁定 4.4。
 
+新增 `GxBindableProperty.notify()` 与 4 个测试套件后，目前只有 4.7 已重新实跑；
+其余版本待按下方要求做矩阵复测。
+
 | 引擎版本 | 实测结果（在 game-template 全新 clone 上） |
 |---|---|
-| 4.4.stable | ✅ 启动 0 错误，8/8 套件通过 |
-| 4.5.stable | ✅ 启动 0 错误，8/8 套件通过 |
-| 4.6.stable | ✅ 启动 0 错误，8/8 套件通过 |
-| 4.7.stable | ✅ 启动 0 错误 0 泄漏，8/8 套件通过 |
+| 4.4.stable | 改动后待复测（改动前：启动 0 错误，8/8 套件通过） |
+| 4.5.stable | 改动后待复测（改动前：启动 0 错误，8/8 套件通过） |
+| 4.6.stable | 改动后待复测（改动前：启动 0 错误，8/8 套件通过） |
+| 4.7.stable | ✅ 本次改动实测：启动 0 错误 0 泄漏，12/12 套件通过 |
 | 4.3 及以下 | ❌ 不支持：`.gd.uid` 是 4.4 引入的，且项目格式声明为 4.4 |
 | 4.8+ | 未验证；`features=4.4` 本身不会阻止打开 |
 
@@ -499,18 +527,19 @@ godot --headless --path . --quit                      # 项目能起、无解析
 |---|---|
 | 解析与运行 | `--quit` 这一步输出里 0 个 `ERROR`、0 个 `SCRIPT ERROR` |
 | 内存 | `--quit` 这一步**没有** `ObjectDB instances were leaked at exit` |
-| 测试 | 每个套件打印 `all passed`，结尾 `RESULT: all 8 suites passed` |
+| 测试 | 每个套件打印 `all passed`，结尾 `RESULT: all 12 suites passed` |
 
 泄漏警告不是噪音，它基本都代表一个引用环（见第 2.8 节），必须查到底。
 
-**两个已知的例外，只出现在测试里，不要误判成回归：**
+**三个已知的例外，只出现在测试里，不要误判成回归：**
 
 - 测试会**故意**走错误分支（未知状态名、传 `null` 流、损坏存档），所以
   `run_all.sh` 的输出里有 `ERROR:` 行是正常的。测试只看 `all passed`。
+- `test_architecture` 会故意触发两条 `GxWriteGuard` warning 来验证违规上报，属预期输出。
 - `test_audio_manager` 退出时固定报十几个 ObjectDB 泄漏。这是 headless 的
   dummy 音频驱动的行为：每次 `play()` 产生的 `AudioStreamPlayback` 在退出时
   都算泄漏，**纯引擎 API 也复现**（建 player → play → stop → free 仍报 2 个）。
-  与 gd-common 无关。其余 7 个套件都是 0 泄漏。
+  与 gd-common 无关。其余 11 个套件都是 0 泄漏。
 
 真正要守住 0 泄漏的是 `--quit` 那一步，它代表玩家实际跑的链路。
 

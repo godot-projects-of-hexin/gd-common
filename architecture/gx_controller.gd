@@ -82,9 +82,14 @@ func send_query(query: GxQuery) -> Variant:
 
 
 ## React to an event class. Released automatically on [method dispose].
+## Registering the same (event class, handler) pair twice is a no-op, so the
+## bookkeeping array always matches the real connection count.
 func register_event(event_script: Script, handler: Callable) -> void:
 	if not _check_usable("register_event"):
 		return
+	for entry in _event_registrations:
+		if entry[0] == event_script and (entry[1] as Callable) == handler:
+			return
 	_architecture.register_event(event_script, handler)
 	_event_registrations.append([event_script, handler])
 
@@ -101,10 +106,15 @@ func unregister_event(event_script: Script, handler: Callable) -> void:
 
 ## Mirror a [GxBindableProperty]. The handler receives the current value
 ## immediately, then on every change. Released automatically on [method dispose].
+## Duplicate (property, handler) pairs are ignored — prop.bind() would connect
+## only once but still fire the immediate callback on every call.
 func bind(property: GxBindableProperty, handler: Callable) -> void:
 	if property == null:
 		push_error("GxController.bind: property is null")
 		return
+	for entry in _property_bindings:
+		if entry[0] == property and (entry[1] as Callable) == handler:
+			return
 	property.bind(handler)
 	_property_bindings.append([property, handler])
 
@@ -125,6 +135,10 @@ func dispose() -> void:
 	if _disposed:
 		return
 	_disposed = true
+	# Drop our own tree_exiting connection: on re-entry the node builds a fresh
+	# controller, and a stale Callable to this disposed one would pile up.
+	if _owner != null and is_instance_valid(_owner) and _owner.tree_exiting.is_connected(dispose):
+		_owner.tree_exiting.disconnect(dispose)
 	if _architecture != null:
 		for entry in _event_registrations:
 			_architecture.unregister_event(entry[0] as Script, entry[1] as Callable)

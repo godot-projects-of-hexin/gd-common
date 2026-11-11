@@ -9,6 +9,8 @@ signal panel_pushed(panel: Control)
 signal panel_will_pop(panel: Control)
 signal panel_popped
 
+## Default CanvasLayer.layer for the panel host. Projects whose own UI layers
+## sit above 100 can call set_layer() at startup instead of editing this file.
 const BASE_LAYER := 100
 
 var _layer: CanvasLayer
@@ -16,9 +18,21 @@ var _stack: Array[Control] = []
 
 
 func _ready() -> void:
-	_layer = CanvasLayer.new()
-	_layer.layer = BASE_LAYER
-	add_child(_layer)
+	set_layer(BASE_LAYER)
+
+
+## Configure the stacking layer of the panel host. Can be called before or
+## after panels are pushed: the host moves as a whole, so existing panels keep
+## their relative order.
+func set_layer(layer_index: int) -> void:
+	if _layer == null:
+		_layer = CanvasLayer.new()
+		add_child(_layer)
+	_layer.layer = layer_index
+
+
+func get_layer() -> int:
+	return _layer.layer if _layer != null else BASE_LAYER
 
 
 ## Instance a packed scene (root must be a Control) and push it on top.

@@ -24,10 +24,24 @@ extends Node
 ## [/codeblock]
 
 var _controller: GxController = null
+var _ready_hook_done := false
 
 
 func _ready() -> void:
 	_ensure_controller()
+	_replay_ready_hook()
+
+
+func _notification(what: int) -> void:
+	# _ready() does not run again on re-entry, but tree_exiting already disposed
+	# the controller. Rebuild it and replay the hook, or bindings stay lost.
+	if what == NOTIFICATION_ENTER_TREE and _ready_hook_done and _controller.is_disposed():
+		_ensure_controller()
+		_replay_ready_hook()
+
+
+func _replay_ready_hook() -> void:
+	_ready_hook_done = true
 	_on_controller_ready()
 
 

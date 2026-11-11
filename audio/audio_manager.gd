@@ -355,7 +355,13 @@ func _fade_to(player: AudioStreamPlayer, target_db: float, duration: float) -> T
 	# music fades keep running while the tree is paused, SFX fades do not.
 	var tween := player.create_tween()
 	tween.tween_property(player, "volume_db", target_db, duration)
-	_tweens[player.get_instance_id()] = tween
+	var id := player.get_instance_id()
+	_tweens[id] = tween
+	# Clear the entry on natural finish; the kill path is handled by _kill_tween().
+	# Capture only the id, not the tween, to avoid a Tween -> Callable -> Tween cycle.
+	tween.finished.connect(func() -> void:
+		_tweens.erase(id)
+	)
 	return tween
 
 

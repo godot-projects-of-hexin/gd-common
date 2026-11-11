@@ -32,6 +32,7 @@ func _process(_delta: float) -> bool:
 	failures += _t_stop_music_clears_stream()
 	failures += _t_ambient_keys_are_tracked()
 	failures += _t_stop_all_sfx()
+	failures += _t_fade_tween_entry_is_cleared_on_finish()
 	_cleanup()
 	if failures > 0:
 		print("AUDIO_MANAGER_TEST: %d failure(s)" % failures)
@@ -242,4 +243,25 @@ func _t_stop_all_sfx() -> int:
 	for child in manager.get_node("SfxRoot").get_children():
 		if (child as AudioStreamPlayer).playing:
 			return _fail("stop_all_sfx left a player running")
+	return 0
+
+
+func _t_fade_tween_entry_is_cleared_on_finish() -> int:
+	var manager := _make_manager()
+	var player := AudioStreamPlayer.new()
+	root.add_child(player)
+	var tween: Tween = manager._fade_to(player, -20.0, 0.01)
+	if tween == null:
+		player.free()
+		return _fail("_fade_to returned null")
+	var id := player.get_instance_id()
+	if not manager._tweens.has(id):
+		player.free()
+		return _fail("_fade_to did not record its tween")
+	# 手动触发自然结束：kill 路径不发 finished，这里验证的是另一条清理路径。
+	tween.emit_signal("finished")
+	if manager._tweens.has(id):
+		player.free()
+		return _fail("finished should clear the tween entry")
+	player.free()
 	return 0
