@@ -149,7 +149,9 @@ func heal(amount: int) -> void:            # 必须写返回类型
 
 - 类型写在赋值同一行时用 `:=`，否则写完整 `: Type`。
 - 集合用类型化形式：`Array[Callable]`、`Array[int]`。
-- 为了兼容性，本库**不使用** `Dictionary[K, V]`（4.4 才引入）和 `@abstract`（4.5+），字典的键值类型写在注释里。
+- 版本基线是 **Godot 4.4+**（见第 7.0 节）。本库**不使用** 4.5+ 才有的
+  `@abstract`、`@export_file_path` 等语法；`Dictionary[K, V]` 虽在 4.4 可用，
+  但为保持写法统一也不使用，字典的键值类型写在注释里。
 
 > **`:=` 推断出 Variant 会直接报错。** Godot 4.7 把 `inferred_declaration` 警告
 > 当成错误处理，脚本会加载失败：
@@ -447,6 +449,34 @@ gd-common/
 ---
 
 ## 7. 验证与提交
+
+### 7.0 版本基线（4.4+）
+
+**gd-common 支持 Godot 4.4 及以上所有 4.x 版本。** 消费项目的 `project.godot`
+声明 `config/features=PackedStringArray("4.4")`，那是**项目格式下限**，不是锁定 4.4。
+
+| 引擎版本 | 实测结果（在 game-template 全新 clone 上） |
+|---|---|
+| 4.4.stable | ✅ 启动 0 错误，8/8 套件通过 |
+| 4.5.stable | ✅ 启动 0 错误，8/8 套件通过 |
+| 4.6.stable | ✅ 启动 0 错误，8/8 套件通过 |
+| 4.7.stable | ✅ 启动 0 错误 0 泄漏，8/8 套件通过 |
+| 4.3 及以下 | ❌ 不支持：`.gd.uid` 是 4.4 引入的，且项目格式声明为 4.4 |
+| 4.8+ | 未验证；`features=4.4` 本身不会阻止打开 |
+
+代码里最老的语法门槛是 `static var`（4.1 引入）。**不要使用 4.5+ 才有的语法**
+（`@abstract`、`@export_file_path` 等）；每次引入新 API 前先确认它在 4.4 里存在。
+新增能力后，至少在 4.4 和当前最新 4.x 各跑一遍第 7.1 节的验证。
+
+跨版本协作的两个已知现象，**都不是回归**：
+
+- 4.7 生成的 `.import` 文件比 4.4 多几行默认参数（`compress/uastc_level`、
+  `process/channel_remap/*`）。混用小版本时该文件会来回变脏；只涉及它且无其它
+  改动时还原即可，不要手动升级 `config/features`。
+- `--import` 会打印 4 行 `gd-common: autoload '...' already exists; keeping the
+  project's own.` —— 插件保留项目自定义 autoload 的正常行为。Godot 4.4 的
+  `--import` 还会额外打印 `Condition "!tasks.has(p_task)" is true`，那是 4.4
+  编辑器自身的 headless 进度对话框问题，与本库无关。
 
 ### 7.1 提交前必须跑
 

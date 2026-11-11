@@ -1,6 +1,6 @@
 # gd-common
 
-Godot 4 的跨项目通用层，以 addon 形式发布，通过 git submodule 引入。**不含任何第三方代码。**
+Godot **4.4+** 的跨项目通用层，以 addon 形式发布，通过 git submodule 引入。**不含任何第三方代码。**
 
 > **规则看 [`agent.md`](agent.md)** —— 分层约束、命名规范、通信方式选择、提交流程都在那一份里。
 > 本文只回答两件事：这里有什么模块，每个模块怎么调。
@@ -510,7 +510,8 @@ GODOT=/path/to/godot ./addons/gd-common/tests/run_all.sh
 godot --headless --path . --script res://addons/gd-common/tests/test_architecture.gd
 ```
 
-全部 8 个套件已在 **Godot 4.7.stable** 上实跑通过，项目启动零错误零泄漏。
+全部 8 个套件已在 **Godot 4.4 / 4.5 / 4.6 / 4.7 stable** 上逐一实跑通过，
+项目启动零错误。版本基线与跨版本注意事项见 `agent.md` 第 7.0 节。
 测试入口必须写成 `_process()` 而不是 `_init()`，原因见 `agent.md` 第 7.2 节。
 
 | 套件 | 覆盖 |
