@@ -6,7 +6,18 @@ extends SceneTree
 ## wiring and state transitions, not audible output.
 
 
-func _init() -> void:
+var _done := false
+## 每个用例都会建一个 manager。测试脚本跑完就退出，没有帧可以处理
+## queue_free()，所以必须在结束前手动 free 掉，否则退出时会报对象泄漏。
+var _managers: Array[Node] = []
+var _cached_a: AudioStreamWAV = null
+var _cached_b: AudioStreamWAV = null
+
+
+func _process(_delta: float) -> bool:
+	if _done:
+		return true
+	_done = true
 	var failures := 0
 	failures += _t_roots_have_correct_process_modes()
 	failures += _t_sfx_pool_is_allocated()
@@ -21,12 +32,25 @@ func _init() -> void:
 	failures += _t_stop_music_clears_stream()
 	failures += _t_ambient_keys_are_tracked()
 	failures += _t_stop_all_sfx()
+	_cleanup()
 	if failures > 0:
 		print("AUDIO_MANAGER_TEST: %d failure(s)" % failures)
 		quit(1)
 	else:
 		print("AUDIO_MANAGER_TEST: all passed")
 		quit(0)
+	return true
+
+
+func _cleanup() -> void:
+	for manager in _managers:
+		if not is_instance_valid(manager):
+			continue
+		# 先停播再释放：play() 过的流会在 AudioServer 上留下 playback，
+		# 不停掉的话退出时会以 AudioStreamWAV / AudioStreamPlaybackWAV 的形式泄漏。
+		manager.stop_all(0.0)
+		manager.free()
+	_managers.clear()
 
 
 func _fail(label: String) -> int:
@@ -38,11 +62,32 @@ func _make_manager() -> Node:
 	var script: Script = load("res://addons/gd-common/audio/audio_manager.gd")
 	var manager: Node = script.new()
 	root.add_child(manager)
+	_managers.append(manager)
 	return manager
 
 
 ## A minimal valid stream, so play() has something real to attach to.
-func _make_stream() -> AudioStreamWAV:
+##
+## headless 的 dummy 音频驱动有个已知现象：每次 play() 产生的
+## AudioStreamPlayback 在退出时都会被算作泄漏，纯引擎 API 也一样
+## （建 player → play → stop → free 仍报 2 个）。所以本套件退出时固定会有
+## 十几个 ObjectDB 泄漏警告，**这不是 gd-common 的问题**，也不是回归信号。
+## 真正要守住 0 泄漏的是项目启动：godot --headless --path . --quit
+##
+## 这里复用两条流只是为了少制造一点噪音。
+func _stream_a() -> AudioStreamWAV:
+	if _cached_a == null:
+		_cached_a = _build_stream()
+	return _cached_a
+
+
+func _stream_b() -> AudioStreamWAV:
+	if _cached_b == null:
+		_cached_b = _build_stream()
+	return _cached_b
+
+
+func _build_stream() -> AudioStreamWAV:
 	var stream := AudioStreamWAV.new()
 	stream.format = AudioStreamWAV.FORMAT_8_BITS
 	stream.mix_rate = 22050
@@ -87,7 +132,7 @@ func _t_play_sfx_rejects_null_stream() -> int:
 
 func _t_play_sfx_assigns_stream() -> int:
 	var manager := _make_manager()
-	var stream := _make_stream()
+	var stream := _stream_a()
 	var player: AudioStreamPlayer = manager.play_sfx(stream, -6.0, 1.2)
 	if player == null:
 		return _fail("play_sfx returned null for a valid stream")
@@ -112,7 +157,7 @@ func _t_invalid_bus_falls_back_to_master() -> int:
 
 func _t_music_starts_and_reports_state() -> int:
 	var manager := _make_manager()
-	var stream := _make_stream()
+	var stream := _stream_a()
 	manager.play_music(stream, 0.0)
 	if not manager.is_music_playing():
 		return _fail("is_music_playing() should be true after play_music")
@@ -125,7 +170,7 @@ func _t_music_starts_and_reports_state() -> int:
 
 func _t_play_same_music_is_idempotent() -> int:
 	var manager := _make_manager()
-	var stream := _make_stream()
+	var stream := _stream_a()
 	manager.play_music(stream, 0.0)
 	var player_before: AudioStream = manager.current_music()
 	manager.play_music(stream, 0.0)
@@ -136,7 +181,7 @@ func _t_play_same_music_is_idempotent() -> int:
 
 func _t_pause_and_resume_music() -> int:
 	var manager := _make_manager()
-	manager.play_music(_make_stream(), 0.0)
+	manager.play_music(_stream_a(), 0.0)
 	manager.pause_music(0.0)
 	if not manager.is_music_paused():
 		return _fail("is_music_paused() should be true after pause_music")
@@ -159,9 +204,9 @@ func _t_pause_music_without_music_is_no_op() -> int:
 
 func _t_play_music_clears_pause_flag() -> int:
 	var manager := _make_manager()
-	manager.play_music(_make_stream(), 0.0)
+	manager.play_music(_stream_a(), 0.0)
 	manager.pause_music(0.0)
-	manager.play_music(_make_stream(), 0.0)
+	manager.play_music(_stream_b(), 0.0)
 	if manager.is_music_paused():
 		return _fail("play_music must clear the paused flag")
 	return 0
@@ -169,7 +214,7 @@ func _t_play_music_clears_pause_flag() -> int:
 
 func _t_stop_music_clears_stream() -> int:
 	var manager := _make_manager()
-	manager.play_music(_make_stream(), 0.0)
+	manager.play_music(_stream_a(), 0.0)
 	manager.stop_music(0.0)
 	if manager.is_music_playing():
 		return _fail("is_music_playing() should be false after stop_music")
@@ -180,7 +225,7 @@ func _t_stop_music_clears_stream() -> int:
 
 func _t_ambient_keys_are_tracked() -> int:
 	var manager := _make_manager()
-	manager.play_ambient(_make_stream(), 0.0, &"rain")
+	manager.play_ambient(_stream_a(), 0.0, &"rain")
 	if not manager.active_ambient_keys().has(&"rain"):
 		return _fail("ambient key 'rain' was not tracked")
 	manager.stop_ambient(&"rain", 0.0)
@@ -191,8 +236,8 @@ func _t_ambient_keys_are_tracked() -> int:
 
 func _t_stop_all_sfx() -> int:
 	var manager := _make_manager()
-	manager.play_sfx(_make_stream())
-	manager.play_sfx(_make_stream())
+	manager.play_sfx(_stream_a())
+	manager.play_sfx(_stream_a())
 	manager.stop_all_sfx()
 	for child in manager.get_node("SfxRoot").get_children():
 		if (child as AudioStreamPlayer).playing:

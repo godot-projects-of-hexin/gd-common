@@ -1,7 +1,13 @@
 extends SceneTree
 
 
-func _init() -> void:
+var _done := false
+
+
+func _process(_delta: float) -> bool:
+	if _done:
+		return true
+	_done = true
 	var failures: int = 0
 	failures += _t_initial_value_with_start_full()
 	failures += _t_drain_emits_depleted_at_zero()
@@ -15,6 +21,7 @@ func _init() -> void:
 	else:
 		print("GAUGE_TEST: all passed")
 		quit(0)
+	return true
 
 
 func _make_gauge(max_v: float = 100.0, start_full: bool = true) -> Node:

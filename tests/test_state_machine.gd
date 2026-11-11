@@ -1,6 +1,12 @@
 extends SceneTree
 
-func _init() -> void:
+var _done := false
+
+
+func _process(_delta: float) -> bool:
+	if _done:
+		return true
+	_done = true
 	var failures: int = 0
 	failures += _t_is_in_state_exact()
 	failures += _t_is_in_state_false_until_start()
@@ -18,6 +24,8 @@ func _init() -> void:
 	else:
 		print("STATE_MACHINE_TEST: all passed")
 		quit(0)
+	return true
+
 
 class _S extends GxState:
 	var entered: int = 0

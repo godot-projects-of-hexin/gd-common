@@ -12,7 +12,13 @@ class Observer:
 		values.append(value)
 
 
-func _init() -> void:
+var _done := false
+
+
+func _process(_delta: float) -> bool:
+	if _done:
+		return true
+	_done = true
 	var failures := 0
 	failures += _t_bind_delivers_current_value()
 	failures += _t_bind_without_init_skips_first_call()
@@ -28,6 +34,7 @@ func _init() -> void:
 	else:
 		print("BINDABLE_PROPERTY_TEST: all passed")
 		quit(0)
+	return true
 
 
 func _fail(label: String) -> int:

@@ -502,12 +502,16 @@ _bullets.available_count()
 
 ```bash
 # 在消费项目（game-template）根目录
+godot --headless --path . --import       # 全新 clone 必须先跑这步
 ./addons/gd-common/tests/run_all.sh
 GODOT=/path/to/godot ./addons/gd-common/tests/run_all.sh
 
 # 单个套件
 godot --headless --path . --script res://addons/gd-common/tests/test_architecture.gd
 ```
+
+全部 8 个套件已在 **Godot 4.7.stable** 上实跑通过，项目启动零错误零泄漏。
+测试入口必须写成 `_process()` 而不是 `_init()`，原因见 `agent.md` 第 7.2 节。
 
 | 套件 | 覆盖 |
 |---|---|

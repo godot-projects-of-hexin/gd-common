@@ -151,6 +151,49 @@ func heal(amount: int) -> void:            # 必须写返回类型
 - 集合用类型化形式：`Array[Callable]`、`Array[int]`。
 - 为了兼容性，本库**不使用** `Dictionary[K, V]`（4.4 才引入）和 `@abstract`（4.5+），字典的键值类型写在注释里。
 
+> **`:=` 推断出 Variant 会直接报错。** Godot 4.7 把 `inferred_declaration` 警告
+> 当成错误处理，脚本会加载失败：
+>
+> ```gdscript
+> var w := weakref(x)              # 报错：推断为 Variant
+> var w: WeakRef = weakref(x)      # 正确
+> var d := cfg.get_value("a", "b") # 报错
+> var d: Variant = cfg.get_value("a", "b")   # 正确
+> ```
+>
+> 凡是返回 `Variant` 的 API（`weakref`、`instance_from_id`、`Dictionary.get`、
+> `Array` 取下标、`send_query`），一律写显式类型。
+
+### 2.8 引用环：RefCounted 的反向引用必须是弱引用
+
+两个 `RefCounted` 互相强引用，引用计数永远归不了零，退出时报
+`ObjectDB instances were leaked at exit`。**拥有方强引用，被拥有方反向弱引用。**
+
+```gdscript
+# 错误：架构强引用 Model，Model 又强引用架构 —— 死环
+var _architecture: GxArchitecture
+
+# 正确
+var _architecture_ref: WeakRef = null
+
+func _bind_architecture(architecture: GxArchitecture) -> void:
+	_architecture_ref = weakref(architecture) if architecture != null else null
+
+func _resolve_architecture() -> GxArchitecture:
+	if _architecture_ref == null:
+		return null
+	return _architecture_ref.get_ref() as GxArchitecture
+```
+
+本库已按此处理的两处：`GxModel` / `GxSystem` → `GxArchitecture`，
+`GxState` → `GxStateMachine`。新增「容器持有成员、成员要回头找容器」的结构时照做。
+
+`Node` 不受此限制 —— 它是手动释放的，释放时会连带放掉脚本成员。
+
+另外，**`static var` 持有的对象不会随场景树消失**。项目用静态单例暴露架构时，
+必须在退出时主动释放（见 `game-template` 的 `GameFlow._exit_tree()`），
+否则引擎退出检查照样报泄漏。
+
 ### 2.6 Node 之外的基类
 
 能不用 `Node` 就不用，官方给出的梯度：
@@ -411,21 +454,77 @@ gd-common/
 
 ```bash
 # 在 game-template 根目录
-godot --headless --path . --quit                      # 项目能起、无解析错误
+godot --headless --path . --import                    # 全新 clone 必须先跑这步
+godot --headless --path . --quit                      # 项目能起、无解析错误、无泄漏
 ./addons/gd-common/tests/run_all.sh                   # 全部测试套件
 ```
 
-单独跑一个套件：
+**第一步不能省。** 全新 clone 没有 `.godot/` 缓存，全局 `class_name` 还没注册，
+直接跑第二步会报 `Could not find base class "GxControllerNode"`。`--import` 会
+生成 `.godot/global_script_class_cache.cfg`，之后才认得这些类。
 
-```bash
-godot --headless --path . --script res://addons/gd-common/tests/test_architecture.gd
-```
+通过标准三条，缺一不可：
 
-通过标准：输出里 **0 个 `ERROR`**，每个套件打印 `all passed`。
+| 检查项 | 通过标准 |
+|---|---|
+| 解析与运行 | `--quit` 这一步输出里 0 个 `ERROR`、0 个 `SCRIPT ERROR` |
+| 内存 | `--quit` 这一步**没有** `ObjectDB instances were leaked at exit` |
+| 测试 | 每个套件打印 `all passed`，结尾 `RESULT: all 8 suites passed` |
+
+泄漏警告不是噪音，它基本都代表一个引用环（见第 2.8 节），必须查到底。
+
+**两个已知的例外，只出现在测试里，不要误判成回归：**
+
+- 测试会**故意**走错误分支（未知状态名、传 `null` 流、损坏存档），所以
+  `run_all.sh` 的输出里有 `ERROR:` 行是正常的。测试只看 `all passed`。
+- `test_audio_manager` 退出时固定报十几个 ObjectDB 泄漏。这是 headless 的
+  dummy 音频驱动的行为：每次 `play()` 产生的 `AudioStreamPlayback` 在退出时
+  都算泄漏，**纯引擎 API 也复现**（建 player → play → stop → free 仍报 2 个）。
+  与 gd-common 无关。其余 7 个套件都是 0 泄漏。
+
+真正要守住 0 泄漏的是 `--quit` 那一步，它代表玩家实际跑的链路。
 
 > Godot 不在 `PATH` 时：`GODOT=/path/to/godot ./addons/gd-common/tests/run_all.sh`
 
-### 7.2 headless 下的类引用
+### 7.2 测试怎么写
+
+测试是独立的 `SceneTree` 脚本，用 `godot --headless --script` 运行。
+**入口必须是 `_process()`，不能是 `_init()` 或 `_initialize()`：**
+
+```gdscript
+extends SceneTree
+
+var _done := false
+
+
+func _process(_delta: float) -> bool:
+	if _done:
+		return true
+	_done = true
+	var failures := 0
+	failures += _t_something()
+	if failures > 0:
+		print("XXX_TEST: %d failure(s)" % failures)
+		quit(1)
+	else:
+		print("XXX_TEST: all passed")
+		quit(0)
+	return true
+```
+
+原因：`_init()` 和 `_initialize()` 执行时 `root` 还没真正进入场景树，
+`root.add_child(node)` **不会触发 `node._ready()`**。任何依赖 `_ready` 的组件
+（`GxGaugeComponent` 读 `@export` 初值、`AudioManager` 建播放器）都会拿到半成品，
+测出来的失败全是假的。到 `_process()` 这一帧，场景树才完整。
+
+另外两条：
+
+- **内部类不能和项目的全局 `class_name` 同名**，否则报
+  `Class "X" hides a global script class`。测试里的辅助类统一加 `Probe` 前缀。
+- **用例之间要清干净共享状态**。写磁盘的测试（存档）必须在用例开头
+  `_cleanup()`，否则前一个用例留下的文件会让后一个误判。
+
+### 7.3 headless 下的类引用
 
 headless 和 CI 不一定有编辑器的全局类缓存。在**测试和工具脚本**里优先用显式 `preload`：
 
@@ -435,7 +534,36 @@ const GxCooldown := preload("res://addons/gd-common/utils/gx_cooldown.gd")
 
 库内部的互相引用可以直接用 `class_name`。
 
-### 7.3 发布链路
+### 7.4 版本控制
+
+Godot 4.1+ 官方只要求忽略两类文件：
+
+```gitignore
+.godot/
+*.translation
+```
+
+**`*.import` 和 `*.uid` 必须提交。** 它们保存导入设置和资源 UID，漏掉会让别人
+clone 之后引用断裂、或者每次导入都产生无谓 diff。老项目里从 Godot 3 抄来的
+`.gitignore` 常常错误地忽略 `*.import`，看到就删掉。
+
+换行符统一靠仓库根目录的 `.gitattributes`：
+
+```gitattributes
+* text=auto eol=lf
+```
+
+Windows 上的 Git 客户端默认 `core.autocrlf=true`，会让文件无谓地显示为已修改。
+官方建议改成：
+
+```bash
+git config --global core.autocrlf input
+```
+
+有 `.gitattributes` 的情况下不改也行，但改了更省心。已经跟踪过的 CRLF 文件要用
+`git add --renormalize .` 才会归一化，光加 `.gitattributes` 不会追溯处理。
+
+### 7.5 发布链路
 
 ```bash
 # 1. 改共享库
@@ -453,7 +581,7 @@ godot --headless --path . --quit
 
 submodule 的指针是**一次提交**，忘记提交 `addons/gd-common` 会让别人 clone 到旧版本。
 
-### 7.4 提交信息
+### 7.6 提交信息
 
 ```text
 feat:      新能力
@@ -470,6 +598,11 @@ chore:     依赖、构建、submodule 指针
 
 | 现象 | 原因 | 做法 |
 |---|---|---|
+| `Could not find base class "GxXxx"` | 全新 clone 没有全局类缓存 | 先跑 `godot --headless --path . --import` |
+| 退出时报 `ObjectDB instances were leaked` | 两个 RefCounted 互相强引用，或 `static var` 没释放 | 反向引用改 `weakref`，静态单例在退出时释放（第 2.8 节） |
+| `:=` 报 `inferred from a Variant value` | Godot 4.7 把该警告当错误 | 写显式类型 `var x: T = ...`（第 2.5 节） |
+| `Class "X" hides a global script class` | 内部类和全局 `class_name` 重名 | 测试辅助类加 `Probe` 前缀 |
+| 测试里组件状态全是默认值 | `_init()` 阶段 `add_child` 不触发 `_ready` | 测试入口改 `_process()`（第 7.2 节） |
 | 订阅静默失效 | lambda 捕获了已销毁的节点 | 用具名方法；表现层走 `GxController`，它会自动解绑 |
 | 信号报参数数量不符 | handler 参数数和信号不一致 | `GxBindableProperty` 只发新值，handler 固定一个参数 |
 | 读存档崩在下标 | 槽位不存在时返回 `{}` | 一律 `data.get("key", 默认值)` |
@@ -479,7 +612,7 @@ chore:     依赖、构建、submodule 指针
 | 冷却不走 | 同上 | 自己调 `tick(delta)` |
 | Gauge 方向反了 | `auto_rate > 0` 是**消耗**，`< 0` 是回复 | 按注释来，别凭直觉 |
 | 对象池对象还在耗 CPU | `release()` 只回池，不离场景树 | 在 `on_release` 里隐藏并 `PROCESS_MODE_DISABLED` |
-| 导出版本资源丢失 | 文件名大小写不统一 | 全项目 `snake_case` |
+| 导出版本资源丢失 | 文件名大小写不统一，或 `.import`/`.uid` 没提交 | 全项目 `snake_case`；按第 7.4 节改 `.gitignore` |
 | `get_model` 报没注册 | 架构没 `initialize()`，或没进 `_on_register()` | 检查项目的 `GameArchitecture` |
 
 ---

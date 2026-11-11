@@ -61,7 +61,7 @@ func detach() -> GxStateMachine:
 
 ## Register a state under a name. Returns self for chaining.
 func add_state(state_name: StringName, state: GxState) -> GxStateMachine:
-	state.machine = self
+	state._bind_machine(self)
 	_states[state_name] = state
 	return self
 

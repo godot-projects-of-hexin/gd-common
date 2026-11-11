@@ -20,12 +20,18 @@ extends RefCounted
 ##     score.set_value(score.get_value() + amount)
 ## [/codeblock]
 
-var _architecture: GxArchitecture = null
+## 架构的弱引用。
+##
+## 架构通过容器强引用 Model，所以反向**必须**是弱引用：两个 RefCounted 互相
+## 强引用会让引用计数永远归不了零，退出时报
+## 「ObjectDB instances were leaked at exit」。
+## 已在 Godot 4.7 实测确认 weakref() 不会增加目标的 get_reference_count()。
+var _architecture_ref: WeakRef = null
 
 
 ## Framework internal. Called by [GxArchitecture] on registration.
 func _bind_architecture(architecture: GxArchitecture) -> void:
-	_architecture = architecture
+	_architecture_ref = weakref(architecture) if architecture != null else null
 
 
 ## Called once by [GxArchitecture] after registration. Override for setup.
@@ -40,15 +46,23 @@ func _on_deinit() -> void:
 
 ## Resolve a registered Utility. Cast the result to the concrete type.
 func get_utility(utility_script: Script) -> GxUtility:
-	if _architecture == null:
-		push_error("GxModel.get_utility: model is not registered to an architecture")
+	var architecture := _resolve_architecture()
+	if architecture == null:
+		push_error("GxModel.get_utility: model is not registered to a live architecture")
 		return null
-	return _architecture.get_utility(utility_script)
+	return architecture.get_utility(utility_script)
 
 
 ## Broadcast a fact that already happened. Never used to ask for work.
 func send_event(event: Object) -> void:
-	if _architecture == null:
-		push_error("GxModel.send_event: model is not registered to an architecture")
+	var architecture := _resolve_architecture()
+	if architecture == null:
+		push_error("GxModel.send_event: model is not registered to a live architecture")
 		return
-	_architecture.send_event(event)
+	architecture.send_event(event)
+
+
+func _resolve_architecture() -> GxArchitecture:
+	if _architecture_ref == null:
+		return null
+	return _architecture_ref.get_ref() as GxArchitecture

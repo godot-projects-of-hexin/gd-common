@@ -211,10 +211,12 @@ func deinitialize() -> void:
 		var system := instance as GxSystem
 		if system != null:
 			system._on_deinit()
+			system._bind_architecture(null)
 	for instance in _models.values():
 		var model := instance as GxModel
 		if model != null:
 			model._on_deinit()
+			model._bind_architecture(null)
 	for instance in _utilities.values():
 		var utility := instance as GxUtility
 		if utility != null:

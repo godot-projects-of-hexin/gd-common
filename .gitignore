@@ -1,2 +1,5 @@
+# Godot 官方只要求忽略这两类（Godot 4.1+）。
+# 注意：*.import 和 *.uid 必须提交，不要加进来 —— 它们保存导入设置与资源 UID，
+# 漏掉会导致别人 clone 后引用断裂。
 .godot/
-*.import
+*.translation

@@ -4,7 +4,13 @@ extends SceneTree
 const SAVE_DIR := "user://saves/"
 
 
-func _init() -> void:
+var _done := false
+
+
+func _process(_delta: float) -> bool:
+	if _done:
+		return true
+	_done = true
 	_cleanup()
 	var failures: int = 0
 	failures += _t_save_and_load_roundtrip()
@@ -20,6 +26,7 @@ func _init() -> void:
 	else:
 		print("SAVE_SYSTEM_TEST: all passed")
 		quit(0)
+	return true
 
 
 func _cleanup() -> void:
@@ -89,6 +96,9 @@ func _t_migrator_runs_on_version_mismatch() -> int:
 
 
 func _t_list_slots_returns_integers_sorted() -> int:
+	# 前面的用例已经写过 slot 1/2/3，这里必须先清干净，
+	# 否则 list_slots() 会把它们一起数进来。
+	_cleanup()
 	var sys := _make_sys()
 	sys.save_to_slot(7, {})
 	sys.save_to_slot(2, {})

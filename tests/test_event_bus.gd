@@ -1,7 +1,13 @@
 extends SceneTree
 
 
-func _init() -> void:
+var _done := false
+
+
+func _process(_delta: float) -> bool:
+	if _done:
+		return true
+	_done = true
 	var failures: int = 0
 	failures += _t_subscribe_and_emit()
 	failures += _t_payload_passthrough()
@@ -15,6 +21,7 @@ func _init() -> void:
 	else:
 		print("EVENT_BUS_TEST: all passed")
 		quit(0)
+	return true
 
 
 func _make_bus() -> Node:

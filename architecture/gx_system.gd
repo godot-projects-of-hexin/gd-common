@@ -22,12 +22,18 @@ extends RefCounted
 ##     player.add_score(event.reward)
 ## [/codeblock]
 
-var _architecture: GxArchitecture = null
+## 架构的弱引用。
+##
+## 架构通过容器强引用 System，所以反向**必须**是弱引用：两个 RefCounted 互相
+## 强引用会让引用计数永远归不了零，退出时报
+## 「ObjectDB instances were leaked at exit」。
+## 已在 Godot 4.7 实测确认 weakref() 不会增加目标的 get_reference_count()。
+var _architecture_ref: WeakRef = null
 
 
 ## Framework internal. Called by [GxArchitecture] on registration.
 func _bind_architecture(architecture: GxArchitecture) -> void:
-	_architecture = architecture
+	_architecture_ref = weakref(architecture) if architecture != null else null
 
 
 ## Called once by [GxArchitecture] after registration. Register events here.
@@ -42,48 +48,60 @@ func _on_deinit() -> void:
 
 ## Resolve another registered System. Cast the result to the concrete type.
 func get_system(system_script: Script) -> GxSystem:
-	if _architecture == null:
-		push_error("GxSystem.get_system: system is not registered to an architecture")
+	var architecture := _resolve_architecture()
+	if architecture == null:
+		push_error("GxSystem.get_system: system is not registered to a live architecture")
 		return null
-	return _architecture.get_system(system_script)
+	return architecture.get_system(system_script)
 
 
 ## Resolve a registered Model. Cast the result to the concrete type.
 func get_model(model_script: Script) -> GxModel:
-	if _architecture == null:
-		push_error("GxSystem.get_model: system is not registered to an architecture")
+	var architecture := _resolve_architecture()
+	if architecture == null:
+		push_error("GxSystem.get_model: system is not registered to a live architecture")
 		return null
-	return _architecture.get_model(model_script)
+	return architecture.get_model(model_script)
 
 
 ## Resolve a registered Utility. Cast the result to the concrete type.
 func get_utility(utility_script: Script) -> GxUtility:
-	if _architecture == null:
-		push_error("GxSystem.get_utility: system is not registered to an architecture")
+	var architecture := _resolve_architecture()
+	if architecture == null:
+		push_error("GxSystem.get_utility: system is not registered to a live architecture")
 		return null
-	return _architecture.get_utility(utility_script)
+	return architecture.get_utility(utility_script)
 
 
 ## Broadcast a fact that already happened.
 func send_event(event: Object) -> void:
-	if _architecture == null:
-		push_error("GxSystem.send_event: system is not registered to an architecture")
+	var architecture := _resolve_architecture()
+	if architecture == null:
+		push_error("GxSystem.send_event: system is not registered to a live architecture")
 		return
-	_architecture.send_event(event)
+	architecture.send_event(event)
 
 
 ## React to an event class. Systems live as long as the architecture, so there
 ## is no automatic unregister — call [method unregister_event] in
 ## [method _on_deinit] if the handler must stop earlier.
 func register_event(event_script: Script, handler: Callable) -> void:
-	if _architecture == null:
-		push_error("GxSystem.register_event: system is not registered to an architecture")
+	var architecture := _resolve_architecture()
+	if architecture == null:
+		push_error("GxSystem.register_event: system is not registered to a live architecture")
 		return
-	_architecture.register_event(event_script, handler)
+	architecture.register_event(event_script, handler)
 
 
 ## Stop reacting to an event class.
 func unregister_event(event_script: Script, handler: Callable) -> void:
-	if _architecture == null:
+	var architecture := _resolve_architecture()
+	if architecture == null:
 		return
-	_architecture.unregister_event(event_script, handler)
+	architecture.unregister_event(event_script, handler)
+
+
+func _resolve_architecture() -> GxArchitecture:
+	if _architecture_ref == null:
+		return null
+	return _architecture_ref.get_ref() as GxArchitecture
